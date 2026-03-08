@@ -1,0 +1,694 @@
+"""
+Page 9: Reports & Export -- Professional PDF / CSV generation with Gemini AI analysis.
+"""
+import streamlit as st
+import pandas as pd
+import json
+import io
+import os
+from datetime import datetime
+
+from dashboard.theme import PURPLE, NEON_GREEN, HOT_PINK
+
+
+def render():
+    st.title("Reportes & Exportacion")
+    st.markdown("*Genera informes profesionales y descarga tus datos.*")
+
+    if "backtest_result" not in st.session_state:
+        st.warning("Ejecuta un backtest primero en Backtest Lab.")
+        return
+
+    result = st.session_state["backtest_result"]
+    metrics = result["metrics"]
+    trades_df = result["trades_df"]
+    config = result.get("config", {})
+
+    tab_pdf, tab_csv, tab_compare = st.tabs([
+        "PDF Report", "CSV Export", "Config Comparison"
+    ])
+
+    with tab_pdf:
+        _render_pdf_report(metrics, trades_df, config)
+
+    with tab_csv:
+        _render_csv_export(metrics, trades_df, config)
+
+    with tab_compare:
+        _render_config_comparison(config)
+
+
+# =====================================================================
+#  PDF REPORT
+# =====================================================================
+def _render_pdf_report(metrics, trades_df: pd.DataFrame, config: dict):
+    st.subheader("Informe PDF Profesional")
+
+    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    if not gemini_key:
+        gemini_key = st.text_input(
+            "Gemini API Key (para analisis AI en el PDF)",
+            type="password",
+            help="Con API key se agrega un analisis profesional generado por Gemini Pro.",
+        )
+
+    include_ai = st.checkbox("Incluir analisis AI (Gemini)", value=bool(gemini_key))
+
+    if st.button("Generar PDF Profesional", type="primary", use_container_width=True):
+        with st.spinner("Generando informe profesional..."):
+            ai_analysis = ""
+            if include_ai and gemini_key:
+                with st.spinner("Consultando Gemini para analisis profesional..."):
+                    ai_analysis = _get_gemini_pdf_analysis(metrics, trades_df, config, gemini_key)
+
+            pdf_bytes = _build_professional_pdf(metrics, trades_df, config, ai_analysis)
+
+            if pdf_bytes:
+                st.success("PDF generado exitosamente!")
+                st.download_button(
+                    "Descargar PDF",
+                    data=pdf_bytes,
+                    file_name=f"chuky_report_{datetime.now():%Y%m%d_%H%M}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+
+    # Preview
+    st.markdown("---")
+    st.markdown("**Vista previa del contenido:**")
+    _render_report_preview(metrics, trades_df, config)
+
+
+def _get_gemini_pdf_analysis(metrics, trades_df, config, api_key: str) -> str:
+    """Call Gemini to generate professional trading analysis for the PDF."""
+    try:
+        import google.generativeai as genai
+
+        genai.configure(api_key=api_key)
+
+        pnl_col = "pnl_net" if "pnl_net" in trades_df.columns else "pnl"
+        wins = trades_df[trades_df[pnl_col] > 0] if not trades_df.empty else pd.DataFrame()
+        losses = trades_df[trades_df[pnl_col] <= 0] if not trades_df.empty else pd.DataFrame()
+
+        # Build streaks
+        streaks = []
+        current = 0
+        for _, row in trades_df.iterrows():
+            if row.get(pnl_col, 0) > 0:
+                current = max(0, current) + 1
+            else:
+                current = min(0, current) - 1
+            streaks.append(current)
+        max_win_streak = max(streaks) if streaks else 0
+        max_loss_streak = abs(min(streaks)) if streaks else 0
+
+        prompt = f"""Eres un analista cuantitativo de trading profesional especializado en futuros NQ/MNQ.
+Genera un analisis tecnico profesional de este backtest para incluir en un PDF de reporte.
+El analisis debe ser DIRECTO, TECNICO y UTIL para un trader profesional.
+Escribe en espanol.
+
+DATOS DEL BACKTEST:
+- Instrumento: MNQ (Micro E-mini Nasdaq 100 Futures)
+- Metodologia: ICT (Inner Circle Trader) - FVGs, Liquidity Sweeps, Market Structure
+- Cuenta: OneUpTrader $50,000 | Trailing DD $2,500
+- Capital Inicial: ${metrics.initial_balance:,.0f}
+- Capital Final: ${metrics.final_balance:,.0f}
+- Total Trades: {metrics.total_trades}
+- Trades Ganadores: {metrics.winning_trades} | Trades Perdedores: {metrics.losing_trades}
+- Win Rate: {metrics.win_rate:.1%}
+- P&L Total (neto): ${metrics.total_pnl:+,.2f}
+- P&L Bruto: ${metrics.total_pnl_gross:+,.2f}
+- Comisiones Totales: ${metrics.total_commission:,.2f}
+- Profit Factor: {metrics.profit_factor:.2f}
+- Sharpe Ratio: {metrics.sharpe_ratio:.2f}
+- Sortino Ratio: {metrics.sortino_ratio:.2f}
+- Expectancy: ${metrics.expectancy:+,.2f}/trade
+- Avg Win: ${metrics.avg_win:+,.2f}
+- Avg Loss: ${metrics.avg_loss:+,.2f}
+- Largest Win: ${metrics.largest_win:+,.2f}
+- Largest Loss: ${metrics.largest_loss:+,.2f}
+- Max Drawdown: ${metrics.max_drawdown_usd:,.2f} ({metrics.max_drawdown_pct:.1%})
+- Max DD Duration: {metrics.max_drawdown_duration_days} dias
+- Mejor Dia: ${metrics.best_day_pnl:+,.2f}
+- Peor Dia: ${metrics.worst_day_pnl:+,.2f}
+- Trades/Dia: {metrics.trades_per_day:.2f}
+- Avg Trade Duration: {metrics.avg_trade_duration_hours:.1f}h
+- Return: {metrics.total_return_pct:.2f}%
+- Racha Ganadora Max: {max_win_streak} trades
+- Racha Perdedora Max: {max_loss_streak} trades
+- DD vs Limite (${metrics.max_drawdown_usd:,.0f} / $2,500): {metrics.max_drawdown_usd/2500*100:.0f}%
+
+CONFIGURACION:
+- Contratos: {config.get('default_contracts', 3)}
+- Max Daily Loss: ${config.get('max_daily_loss', 550):,.0f}
+- SL Buffer: {config.get('sl_buffer_ticks', 4)} ticks
+- TP Multiplier: {config.get('tp_multiplier', 2.0)}x
+- Break Even: {config.get('break_even_pct', 0.50):.0%}
+
+Estructura tu respuesta EXACTAMENTE asi (usa estos titulos):
+
+1. RESUMEN EJECUTIVO
+(2-3 oraciones de veredicto general)
+
+2. ANALISIS DE RENDIMIENTO
+- Evaluacion de Win Rate vs Profit Factor
+- Evaluacion de R:R ratio (avg_win/avg_loss)
+- Analisis de expectancy y su significado
+
+3. GESTION DE RIESGO
+- Evaluacion del drawdown vs limite de la prop firm ($2,500 trailing DD)
+- Riesgo por trade y por dia
+- Probabilidad de ruin estimada
+
+4. FORTALEZAS DETECTADAS
+(Lista de 2-4 fortalezas con datos concretos)
+
+5. DEBILIDADES Y RIESGOS
+(Lista de 2-4 debilidades con datos concretos)
+
+6. RECOMENDACIONES CONCRETAS
+(3-5 acciones especificas con numeros para mejorar el sistema)
+
+7. VEREDICTO PARA PROP FIRM
+(Evaluacion: LISTO / NECESITA TRABAJO / NO LISTO con justificacion)
+
+Responde SOLO con el analisis, sin markdown headers (#), usa texto plano."""
+
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response = model.generate_content(prompt)
+        return response.text or ""
+
+    except Exception as e:
+        return f"[Error al generar analisis AI: {str(e)}]"
+
+
+def _build_professional_pdf(metrics, trades_df, config, ai_analysis: str = "") -> bytes:
+    """Build professional trading report PDF using fpdf2."""
+    try:
+        from fpdf import FPDF
+
+        _CHAR_MAP = {
+            '\u2014': '--', '\u2013': '-', '\u2018': "'", '\u2019': "'",
+            '\u201c': '"', '\u201d': '"', '\u2026': '...', '\u2022': '*',
+            '\u2192': '->', '\u2190': '<-', '\u2264': '<=', '\u2265': '>=',
+            '\u00b1': '+/-', '\u2260': '!=', '\u221e': 'inf',
+            '\U0001f608': '', '\U0001f4c8': '', '\U0001f4c9': '',
+            '\u2705': '[OK]', '\u274c': '[X]', '\u26a0\ufe0f': '[!]', '\u26a0': '[!]',
+            '\u00e1': 'a', '\u00e9': 'e', '\u00ed': 'i', '\u00f3': 'o', '\u00fa': 'u',
+            '\u00f1': 'n', '\u00c1': 'A', '\u00c9': 'E', '\u00cd': 'I', '\u00d3': 'O',
+            '\u00da': 'U', '\u00d1': 'N', '\u00fc': 'u', '\u00dc': 'U',
+            '\u00bf': '?', '\u00a1': '!',
+        }
+
+        def _safe(text: str) -> str:
+            for orig, repl in _CHAR_MAP.items():
+                text = text.replace(orig, repl)
+            return text.encode('latin-1', errors='replace').decode('latin-1')
+
+        # Colors
+        C_PURPLE = (155, 89, 182)
+        C_DARK = (38, 20, 71)
+        C_WHITE = (255, 255, 255)
+        C_LIGHT_GRAY = (240, 240, 240)
+        C_TEXT = (50, 50, 50)
+        C_GREEN = (0, 200, 83)
+        C_RED = (244, 67, 54)
+        C_HEADER_BG = (155, 89, 182)
+
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=15)
+
+        # ── COVER PAGE ──────────────────────────────────────────
+        pdf.add_page()
+        pdf.set_fill_color(*C_DARK)
+        pdf.rect(0, 0, 210, 297, 'F')
+
+        # Purple accent bar
+        pdf.set_fill_color(*C_PURPLE)
+        pdf.rect(0, 100, 210, 4, 'F')
+        pdf.rect(0, 180, 210, 2, 'F')
+
+        pdf.set_text_color(*C_PURPLE)
+        pdf.set_font("Helvetica", "B", 36)
+        pdf.ln(40)
+        pdf.cell(0, 16, "CHUKY BOT", align="C", new_x="LMARGIN", new_y="NEXT")
+
+        pdf.set_font("Helvetica", "", 14)
+        pdf.set_text_color(200, 200, 200)
+        pdf.ln(5)
+        pdf.cell(0, 10, "Backtest Performance Report", align="C", new_x="LMARGIN", new_y="NEXT")
+
+        pdf.ln(50)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_text_color(180, 180, 180)
+        pdf.cell(0, 8, _safe(f"Fecha: {datetime.now():%Y-%m-%d %H:%M}"), align="C",
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 8, "Instrumento: MNQ Futures (Micro E-mini Nasdaq)", align="C",
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 8, "Metodologia: ICT (Inner Circle Trader)", align="C",
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 8, "Cuenta: OneUpTrader $50,000 | Trailing DD $2,500", align="C",
+                 new_x="LMARGIN", new_y="NEXT")
+
+        pdf.ln(30)
+        pdf.set_text_color(139, 92, 246)
+        pdf.set_font("Helvetica", "I", 11)
+        pdf.cell(0, 10, "Chuky no duerme. Chuky no perdona.", align="C",
+                 new_x="LMARGIN", new_y="NEXT")
+
+        # ── PAGE 2: EXECUTIVE SUMMARY ───────────────────────────
+        def _section_header(title):
+            pdf.set_fill_color(*C_PURPLE)
+            pdf.set_text_color(*C_WHITE)
+            pdf.set_font("Helvetica", "B", 14)
+            pdf.cell(0, 10, _safe(f"  {title}"), fill=True, new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(4)
+            pdf.set_text_color(*C_TEXT)
+
+        def _kv(label, value, bold_value=False):
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(55, 7, _safe(label))
+            pdf.set_font("Helvetica", "B" if bold_value else "", 10)
+            pdf.cell(0, 7, _safe(str(value)), new_x="LMARGIN", new_y="NEXT")
+
+        pdf.add_page()
+        pdf.set_fill_color(*C_WHITE)
+        pdf.rect(0, 0, 210, 297, 'F')
+
+        _section_header("RESUMEN EJECUTIVO")
+        pdf.set_font("Helvetica", "", 10)
+
+        # Verdict box
+        pnl_positive = metrics.total_pnl >= 0
+        pdf.set_fill_color(*(C_GREEN if pnl_positive else C_RED))
+        pdf.set_text_color(*C_WHITE)
+        pdf.set_font("Helvetica", "B", 12)
+        verdict = "PROFITABLE" if pnl_positive else "NOT PROFITABLE"
+        pdf.cell(0, 10, _safe(f"  RESULTADO: {verdict}"), fill=True,
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(4)
+        pdf.set_text_color(*C_TEXT)
+
+        # Quick KPIs
+        pdf.set_font("Helvetica", "", 10)
+        kpis = [
+            ("Capital Inicial", f"${metrics.initial_balance:,.0f}"),
+            ("Capital Final", f"${metrics.final_balance:,.0f}"),
+            ("Retorno", f"{metrics.total_return_pct:+.2f}%"),
+            ("P&L Neto", f"${metrics.total_pnl:+,.2f}"),
+            ("Total Trades", f"{metrics.total_trades}"),
+            ("Win Rate", f"{metrics.win_rate:.1%}"),
+            ("Profit Factor", f"{metrics.profit_factor:.2f}"),
+            ("Sharpe Ratio", f"{metrics.sharpe_ratio:.2f}"),
+            ("Sortino Ratio", f"{metrics.sortino_ratio:.2f}"),
+            ("Max Drawdown", f"${metrics.max_drawdown_usd:,.2f} ({metrics.max_drawdown_pct:.1%})"),
+        ]
+        for label, value in kpis:
+            _kv(label, value, bold_value=True)
+
+        # ── DETAILED METRICS ────────────────────────────────────
+        pdf.ln(6)
+        _section_header("METRICAS DETALLADAS")
+
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(*C_PURPLE)
+        pdf.cell(0, 8, "P&L Analysis", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(*C_TEXT)
+
+        pnl_rows = [
+            ("P&L Bruto", f"${metrics.total_pnl_gross:+,.2f}"),
+            ("Comisiones Totales", f"${metrics.total_commission:,.2f}"),
+            ("P&L Neto", f"${metrics.total_pnl:+,.2f}"),
+            ("Avg Win", f"${metrics.avg_win:+,.2f}"),
+            ("Avg Loss", f"${metrics.avg_loss:+,.2f}"),
+            ("Largest Win", f"${metrics.largest_win:+,.2f}"),
+            ("Largest Loss", f"${metrics.largest_loss:+,.2f}"),
+            ("Expectancy", f"${metrics.expectancy:+,.2f}/trade"),
+        ]
+        for label, value in pnl_rows:
+            _kv(label, value)
+
+        pdf.ln(4)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(*C_PURPLE)
+        pdf.cell(0, 8, "Risk Analysis", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(*C_TEXT)
+
+        dd_pct_limit = metrics.max_drawdown_usd / 2500 * 100
+        risk_rows = [
+            ("Max Drawdown", f"${metrics.max_drawdown_usd:,.2f}"),
+            ("Max DD % del Capital", f"{metrics.max_drawdown_pct:.1%}"),
+            ("DD vs Limite $2,500", f"{dd_pct_limit:.0f}%"),
+            ("DD Duration", f"{metrics.max_drawdown_duration_days} dias"),
+            ("Avg Drawdown", f"${metrics.avg_drawdown_usd:,.2f}"),
+            ("Mejor Dia", f"${metrics.best_day_pnl:+,.2f}"),
+            ("Peor Dia", f"${metrics.worst_day_pnl:+,.2f}"),
+        ]
+        for label, value in risk_rows:
+            _kv(label, value)
+
+        pdf.ln(4)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(*C_PURPLE)
+        pdf.cell(0, 8, "Trading Activity", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(*C_TEXT)
+
+        activity_rows = [
+            ("Trades Ganadores", f"{metrics.winning_trades}"),
+            ("Trades Perdedores", f"{metrics.losing_trades}"),
+            ("R:R Ratio (avg)", f"{metrics.avg_rr_ratio:.2f}"),
+            ("Trades/Dia", f"{metrics.trades_per_day:.2f}"),
+            ("Avg Duration", f"{metrics.avg_trade_duration_hours:.1f}h"),
+            ("Consistency Check", f"{'PASSED' if metrics.consistency_check_passed else 'FAILED'}"),
+        ]
+        for label, value in activity_rows:
+            _kv(label, value)
+
+        # ── TRADES TABLE ────────────────────────────────────────
+        if not trades_df.empty:
+            pdf.add_page("L")
+            pdf.set_fill_color(*C_WHITE)
+            pdf.rect(0, 0, 297, 210, 'F')
+            _section_header("LISTA DE TRADES")
+
+            pnl_col = "pnl_net" if "pnl_net" in trades_df.columns else "pnl"
+            show_cols = ["direction", "entry_price", "exit_price", "sl_price",
+                         "tp_price", pnl_col, "contracts", "reason"]
+            available = [c for c in show_cols if c in trades_df.columns]
+            col_labels = {
+                "direction": "Dir", "entry_price": "Entry", "exit_price": "Exit",
+                "sl_price": "SL", "tp_price": "TP", pnl_col: "P&L Net",
+                "contracts": "Qty", "reason": "Exit Reason",
+            }
+            col_widths = {
+                "direction": 18, "entry_price": 32, "exit_price": 32,
+                "sl_price": 32, "tp_price": 32, pnl_col: 32,
+                "contracts": 16, "reason": 40,
+            }
+
+            # Header row
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_fill_color(*C_HEADER_BG)
+            pdf.set_text_color(*C_WHITE)
+            for col in available:
+                pdf.cell(col_widths.get(col, 30), 7,
+                         _safe(col_labels.get(col, col)), border=1, fill=True)
+            pdf.ln()
+
+            # Data rows
+            pdf.set_font("Helvetica", "", 7)
+            pdf.set_text_color(*C_TEXT)
+            for idx, (_, row) in enumerate(trades_df.iterrows()):
+                if idx % 2 == 0:
+                    pdf.set_fill_color(*C_LIGHT_GRAY)
+                else:
+                    pdf.set_fill_color(*C_WHITE)
+
+                for col in available:
+                    val = row[col]
+                    if isinstance(val, float):
+                        text = f"{val:,.2f}"
+                    else:
+                        text = str(val)[:20]
+                    # Color P&L
+                    if col == pnl_col and isinstance(val, (int, float)):
+                        pdf.set_text_color(*(C_GREEN if val >= 0 else C_RED))
+                    else:
+                        pdf.set_text_color(*C_TEXT)
+                    pdf.cell(col_widths.get(col, 30), 6,
+                             _safe(text), border=1, fill=True)
+                pdf.ln()
+
+        # ── CONFIGURATION ───────────────────────────────────────
+        pdf.add_page()
+        pdf.set_fill_color(*C_WHITE)
+        pdf.rect(0, 0, 210, 297, 'F')
+        _section_header("CONFIGURACION DEL BOT")
+
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(*C_TEXT)
+
+        config_groups = [
+            ("Capital & Riesgo", [
+                ("Capital Inicial", f"${config.get('initial_capital', 50000):,.0f}"),
+                ("Contratos", f"{config.get('default_contracts', 3)}"),
+                ("Max Daily Loss", f"${config.get('max_daily_loss', 550):,.0f}"),
+                ("Max Trades/Dia", f"{config.get('max_trades_per_day', 2)}"),
+            ]),
+            ("Entry (ICT)", [
+                ("FVG Min Size %ile", f"{config.get('fvg_min_size_percentile', 70)}"),
+                ("Lookback Bars", f"{config.get('fvg_lookback_bars', 20)}"),
+                ("Structure Lookback", f"{config.get('structure_lookback', 50)}"),
+                ("Require Sweep", f"{config.get('require_sweep', True)}"),
+                ("Require BOS", f"{config.get('require_bos', True)}"),
+            ]),
+            ("Exit Management", [
+                ("SL Buffer (ticks)", f"{config.get('sl_buffer_ticks', 4)}"),
+                ("TP Multiplier", f"{config.get('tp_multiplier', 2.0)}x"),
+                ("Break Even @", f"{config.get('break_even_pct', 0.50):.0%}"),
+                ("Close @ TP %", f"{config.get('close_at_pct', 0.90):.0%}"),
+            ]),
+        ]
+
+        for group_name, items in config_groups:
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_text_color(*C_PURPLE)
+            pdf.cell(0, 8, _safe(group_name), new_x="LMARGIN", new_y="NEXT")
+            pdf.set_text_color(*C_TEXT)
+            for label, value in items:
+                _kv(label, value)
+            pdf.ln(3)
+
+        # ── AI ANALYSIS ─────────────────────────────────────────
+        if ai_analysis and not ai_analysis.startswith("[Error"):
+            pdf.add_page()
+            pdf.set_fill_color(*C_WHITE)
+            pdf.rect(0, 0, 210, 297, 'F')
+            _section_header("ANALISIS PROFESIONAL (AI)")
+
+            pdf.set_font("Helvetica", "", 9)
+            pdf.set_text_color(*C_TEXT)
+
+            for line in ai_analysis.split("\n"):
+                line = line.strip()
+                if not line:
+                    pdf.ln(3)
+                    continue
+
+                # Detect section headers (numbered like "1. RESUMEN" etc.)
+                if (line and len(line) < 80 and
+                    (line[0].isdigit() or line.isupper())):
+                    pdf.ln(3)
+                    pdf.set_font("Helvetica", "B", 10)
+                    pdf.set_text_color(*C_PURPLE)
+                    pdf.multi_cell(0, 6, _safe(line))
+                    pdf.set_font("Helvetica", "", 9)
+                    pdf.set_text_color(*C_TEXT)
+                elif line.startswith("-") or line.startswith("*"):
+                    pdf.cell(5, 5, "")
+                    pdf.multi_cell(0, 5, _safe(line))
+                else:
+                    pdf.multi_cell(0, 5, _safe(line))
+
+        # ── DISCLAIMER ──────────────────────────────────────────
+        pdf.add_page()
+        pdf.set_fill_color(*C_WHITE)
+        pdf.rect(0, 0, 210, 297, 'F')
+        _section_header("DISCLAIMER")
+
+        pdf.set_font("Helvetica", "I", 8)
+        pdf.set_text_color(120, 120, 120)
+        disclaimer = (
+            "Este reporte fue generado automaticamente por El Chuky Bot. "
+            "Los resultados mostrados corresponden a un backtest historico y NO garantizan "
+            "rendimientos futuros. El trading de futuros conlleva riesgo sustancial de perdida. "
+            "Resultados pasados no son indicativos de resultados futuros. "
+            "Los datos de mercado utilizados provienen de Yahoo Finance (NQ=F como proxy de MNQ) "
+            "y pueden diferir de los datos reales del broker. "
+            "Use esta informacion bajo su propio riesgo y criterio."
+        )
+        pdf.multi_cell(0, 5, _safe(disclaimer))
+
+        # Return as bytes (not bytearray) -- fixes StreamlitAPIException
+        output = pdf.output()
+        if isinstance(output, bytearray):
+            return bytes(output)
+        return output
+
+    except ImportError:
+        st.error("Instala fpdf2: pip install fpdf2")
+        return b""
+    except Exception as e:
+        st.error(f"Error generando PDF: {e}")
+        return b""
+
+
+def _render_report_preview(metrics, trades_df, config):
+    """Show in-app preview of report content."""
+    with st.expander("Metricas", expanded=True):
+        cols = st.columns(4, gap="medium")
+        cols[0].metric("Trades", metrics.total_trades)
+        cols[1].metric("Win Rate", f"{metrics.win_rate:.1%}")
+        cols[2].metric("P&L", f"${metrics.total_pnl:+,.2f}")
+        cols[3].metric("Sharpe", f"{metrics.sharpe_ratio:.2f}")
+
+        cols2 = st.columns(4, gap="medium")
+        cols2[0].metric("Profit Factor", f"{metrics.profit_factor:.2f}")
+        cols2[1].metric("Max DD", f"${metrics.max_drawdown_usd:,.0f}")
+        cols2[2].metric("Expectancy", f"${metrics.expectancy:+,.2f}")
+        cols2[3].metric("Sortino", f"{metrics.sortino_ratio:.2f}")
+
+    with st.expander("Trades Recientes"):
+        if not trades_df.empty:
+            pnl_col = "pnl_net" if "pnl_net" in trades_df.columns else "pnl"
+            show_cols = [c for c in ["direction", "entry_price", "exit_price",
+                                      pnl_col, "contracts", "reason"]
+                         if c in trades_df.columns]
+            st.dataframe(trades_df[show_cols].tail(10), use_container_width=True)
+        else:
+            st.info("Sin trades disponibles.")
+
+    with st.expander("Configuracion"):
+        st.json(config)
+
+
+# =====================================================================
+#  CSV EXPORT
+# =====================================================================
+def _render_csv_export(metrics, trades_df: pd.DataFrame, config: dict):
+    st.subheader("Exportar Datos CSV")
+
+    col1, col2 = st.columns(2, gap="large")
+
+    with col1:
+        st.markdown("**Trades**")
+        st.markdown(f"{len(trades_df)} trades disponibles")
+        if not trades_df.empty:
+            csv_trades = trades_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "Descargar Trades CSV",
+                data=csv_trades,
+                file_name=f"chuky_trades_{datetime.now():%Y%m%d}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+    with col2:
+        st.markdown("**Equity Curve**")
+        pnl_col = "pnl_net" if "pnl_net" in trades_df.columns else "pnl"
+        if not trades_df.empty and pnl_col in trades_df.columns:
+            initial = config.get("initial_capital", 50000)
+            equity = trades_df[[pnl_col]].copy()
+            equity.columns = ["pnl"]
+            equity["cumulative_pnl"] = equity["pnl"].cumsum()
+            equity["equity"] = initial + equity["cumulative_pnl"]
+            equity["trade_num"] = range(1, len(equity) + 1)
+
+            csv_equity = equity.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "Descargar Equity CSV",
+                data=csv_equity,
+                file_name=f"chuky_equity_{datetime.now():%Y%m%d}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        else:
+            st.info("Sin datos de equity.")
+
+    st.markdown("---")
+
+    # Metrics summary CSV
+    st.markdown("**Metricas Resumen**")
+    metrics_dict = {
+        "total_trades": metrics.total_trades,
+        "win_rate": round(metrics.win_rate, 4),
+        "total_pnl": round(metrics.total_pnl, 2),
+        "profit_factor": round(metrics.profit_factor, 2),
+        "sharpe_ratio": round(metrics.sharpe_ratio, 2),
+        "sortino_ratio": round(metrics.sortino_ratio, 2),
+        "max_drawdown_usd": round(metrics.max_drawdown_usd, 2),
+        "max_drawdown_pct": round(metrics.max_drawdown_pct, 4),
+        "expectancy": round(metrics.expectancy, 2),
+        "avg_win": round(metrics.avg_win, 2),
+        "avg_loss": round(metrics.avg_loss, 2),
+        "largest_win": round(metrics.largest_win, 2),
+        "largest_loss": round(metrics.largest_loss, 2),
+    }
+    metrics_df = pd.DataFrame([metrics_dict])
+    csv_metrics = metrics_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Descargar Metricas CSV",
+        data=csv_metrics,
+        file_name=f"chuky_metrics_{datetime.now():%Y%m%d}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+    # Config JSON download
+    st.markdown("---")
+    st.markdown("**Configuracion JSON**")
+    config_json = json.dumps(config, indent=2, default=str).encode("utf-8")
+    st.download_button(
+        "Descargar Config JSON",
+        data=config_json,
+        file_name=f"chuky_config_{datetime.now():%Y%m%d}.json",
+        mime="application/json",
+        use_container_width=True,
+    )
+
+
+# =====================================================================
+#  CONFIG COMPARISON
+# =====================================================================
+def _render_config_comparison(current_config: dict):
+    st.subheader("Comparar Configuraciones")
+    st.markdown("Compara tu configuracion actual con una guardada.")
+
+    from dashboard.engine import list_configs, load_config, PRESET_CONFIGS
+
+    saved_configs = list_configs()
+    saved_names = [c.get("name", "?") for c in saved_configs if isinstance(c, dict)]
+    presets = list(PRESET_CONFIGS.keys())
+    all_options = presets + saved_names
+
+    if not all_options:
+        st.info("No hay otras configuraciones para comparar. "
+                "Guarda alguna en el Bot Builder primero.")
+        return
+
+    selected = st.selectbox("Comparar con:", all_options)
+
+    if selected in PRESET_CONFIGS:
+        compare_config = PRESET_CONFIGS[selected].copy()
+    else:
+        compare_config = load_config(selected)
+
+    if compare_config is None:
+        st.error("No se pudo cargar la configuracion.")
+        return
+
+    all_keys = sorted(set(list(current_config.keys()) + list(compare_config.keys())))
+
+    rows = []
+    for key in all_keys:
+        val_current = current_config.get(key, "--")
+        val_compare = compare_config.get(key, "--")
+        changed = str(val_current) != str(val_compare)
+        rows.append({
+            "Parametro": key,
+            "Actual": str(val_current),
+            selected: str(val_compare),
+            "Cambio": "SI" if changed else "",
+        })
+
+    df = pd.DataFrame(rows)
+
+    show_only_diff = st.checkbox("Mostrar solo diferencias", value=True)
+    if show_only_diff:
+        df = df[df["Cambio"] == "SI"]
+
+    if df.empty:
+        st.success("Las configuraciones son identicas.")
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.caption(f"{len(df)} parametros diferentes.")
