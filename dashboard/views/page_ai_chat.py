@@ -4,6 +4,7 @@ Uses Google Gemini API for professional trading analysis.
 """
 import streamlit as st
 import os
+import pandas as pd
 from datetime import datetime
 
 from dashboard.theme import PURPLE, NEON_GREEN, HOT_PINK
@@ -27,6 +28,13 @@ def render():
     if "chat_history" not in st.session_state:
         st.session_state["chat_history"] = []
 
+    # ── Backtest handoff from Backtest Lab ─────────────────────
+    prefill_prompt = st.session_state.get("ai_prefill_prompt")
+    if prefill_prompt:
+        _handle_message(prefill_prompt, api_key)
+        st.session_state.pop("ai_prefill_prompt", None)
+        st.success("Contexto del ultimo backtest cargado en el chat.")
+
     # ── Quick Questions ─────────────────────────────────────────
     st.markdown("**Preguntas Rapidas:**")
     quick_qs = st.columns(4, gap="medium")
@@ -38,7 +46,7 @@ def render():
     ]
     for i, q in enumerate(quick_questions):
         with quick_qs[i]:
-            if st.button(q, use_container_width=True, key=f"quick_{i}"):
+            if st.button(q, width="stretch", key=f"quick_{i}"):
                 _handle_message(q, api_key)
                 st.rerun()
 
@@ -95,8 +103,20 @@ def _build_context() -> str:
     metrics = result["metrics"]
     trades_df = result["trades_df"]
     config = result.get("config", {})
+    fvgs = result.get("fvgs", [])
+    fvg_summary = result.get("fvg_summary", {})
+    equity_df = result.get("equity_curve", pd.DataFrame())
 
     pnl_col = "pnl_net" if "pnl_net" in trades_df.columns else "pnl"
+    decision_fvgs = len([f for f in fvgs if f.get("decision_fvg")])
+    equity_points = len(equity_df) if isinstance(equity_df, pd.DataFrame) else 0
+    equity_last = (
+        float(equity_df["equity"].iloc[-1])
+        if isinstance(equity_df, pd.DataFrame)
+        and not equity_df.empty
+        and "equity" in equity_df.columns
+        else metrics.final_balance
+    )
 
     ctx = f"""CONTEXTO DEL BACKTEST:
 - Config: {config.get('name', 'Default')}
@@ -124,13 +144,22 @@ def _build_context() -> str:
 - Avg R:R: {metrics.avg_rr_ratio:.2f}
 - DD Duration: {metrics.max_drawdown_duration_days} dias
 
+CONTEXTO FVG MULTI-TF:
+- Total FVGs detectados: {len(fvgs)}
+- Decision FVGs: {decision_fvgs}
+- Resumen por timeframe: {fvg_summary.get('by_timeframe', {})}
+
+EQUITY CURVE:
+- Puntos de equity: {equity_points}
+- Equity final registrada: ${equity_last:,.2f}
+
 CONFIGURACION:
 - Contratos: {config.get('default_contracts', 3)}
 - Max Daily Loss: ${config.get('max_daily_loss', 550):,.0f}
 - Max Trades/Dia: {config.get('max_trades_per_day', 2)}
-- SL Buffer: {config.get('sl_buffer_ticks', 4)} ticks
-- TP Multiplier: {config.get('tp_multiplier', 2.0)}x
-- Break Even: {config.get('break_even_pct', 0.50):.0%}
+- FVG Lookback 1H/15M/5M/1M: {config.get('fvg_lookback_1h', 10)}/{config.get('fvg_lookback_15m', 16)}/{config.get('fvg_lookback_5m', 24)}/{config.get('fvg_lookback_1m', 30)}
+- Max FVG 1H/15M/5M/1M: {config.get('fvg_max_1h', 4)}/{config.get('fvg_max_15m', 4)}/{config.get('fvg_max_5m', 3)}/{config.get('fvg_max_1m', 3)}
+- Break Even: {config.get('break_even_pct', 0.60):.0%}
 - Close at TP: {config.get('close_at_pct', 0.90):.0%}
 
 CUENTA: OneUpTrader $50,000 | MNQ Futures | Trailing DD $2,500
@@ -240,7 +269,7 @@ def _generate_local_response(user_msg: str, context: str) -> str:
             f"1. **FVG Quality:** Filtra FVGs mas grandes (min size percentile mas alto)\n"
             f"2. **Sesiones:** Enfocate en NY AM (9:30-11:00 ET) -- mejor liquidez\n"
             f"3. **Confirmacion:** Espera que el precio respete la estructura en 4H\n"
-            f"4. **SL mas amplio:** Prueba +2 ticks de buffer para evitar stops prematuros\n"
+            f"4. **Objetivo claro:** Prioriza entries con liquidez objetivo bien definida (PDH/PDL/swing)\n"
             f"5. **Paciencia:** Menos trades de mejor calidad > muchos trades mediocres"
         )
 

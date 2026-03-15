@@ -19,14 +19,14 @@ import pandas as pd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from config.settings import (
-    POINT_VALUE, DEFAULT_CONTRACTS, SL_BUFFER_TICKS, TICK_VALUE,
+    POINT_VALUE, DEFAULT_CONTRACTS,
     BREAK_EVEN_TRIGGER_PCT, CLOSE_AT_PCT_OF_TP,
     MAX_DAILY_LOSS, MAX_TRADES_PER_DAY,
     BIG_LOSS_THRESHOLD, BIG_WIN_THRESHOLD,
     COMMISSION_PER_SIDE, SLIPPAGE_TICKS,
     ACCOUNT_BALANCE, TRAILING_DRAWDOWN_MAX,
     FVG_DUBIOUS_BREAK_PCT, FVG_DUBIOUS_WAIT_BARS,
-    DISCOUNT_ZONE_PCT, ATR_PERIOD,
+    DISCOUNT_ZONE_PCT, KILLZONES,
     STRUCTURE_LOOKBACK_4H,
 )
 from indicators.fvg import (
@@ -40,7 +40,6 @@ from indicators.liquidity import (
 from indicators.market_structure import (
     MarketBias, analyze_4h_trend, detect_swing_points,
     determine_structure, is_move_exhausted, classify_discount_premium,
-    compute_atr,
 )
 from risk.position_sizing import PositionSizer
 from risk.preflight import preflight_check, PreflightResult
@@ -87,18 +86,15 @@ class ICTStrategy(bt.Strategy):
         ("max_daily_loss", MAX_DAILY_LOSS),
         ("max_trades_per_day", MAX_TRADES_PER_DAY),
         ("default_contracts", DEFAULT_CONTRACTS),
-        ("sl_buffer_ticks", SL_BUFFER_TICKS),
         ("break_even_pct", BREAK_EVEN_TRIGGER_PCT),
         ("close_at_pct", CLOSE_AT_PCT_OF_TP),
         ("big_loss_threshold", BIG_LOSS_THRESHOLD),
         ("big_win_threshold", BIG_WIN_THRESHOLD),
 
         # ICT parameters
-        ("fvg_lookback", 50),
         ("fvg_max_1h", 4),
         ("fvg_search_range", 400),
         ("structure_lookback", STRUCTURE_LOOKBACK_4H),
-        ("atr_period", ATR_PERIOD),
         ("discount_pct", DISCOUNT_ZONE_PCT),
 
         # Trading hours (UTC) — 8:30-16:00 VET = 12:30-20:00 UTC
@@ -116,10 +112,6 @@ class ICTStrategy(bt.Strategy):
         self.data_daily = self.datas[2] if len(self.datas) > 2 else None
 
         # ATR indicator
-        self.atr = bt.indicators.AverageTrueRange(
-            self.data_base, period=self.p.atr_period
-        )
-
         # FVG and liquidity trackers
         self.fvg_tracker = FVGTracker(
             dubious_break_pct=FVG_DUBIOUS_BREAK_PCT,
@@ -150,8 +142,7 @@ class ICTStrategy(bt.Strategy):
         self._bar_count: int = 0
         self._trades_log: List[Dict] = []
         self._pending_order = None
-
-        # Swing point tracking
+        self._actual_exit_price: Optional[float] = None
         self._recent_swing_high: Optional[float] = None
         self._recent_swing_low: Optional[float] = None
 
@@ -342,6 +333,37 @@ class ICTStrategy(bt.Strategy):
     # =========================================================================
     # ENTRY LOGIC — Buscar oportunidades
     # =========================================================================
+    # =========================================================================
+    # SESSION / KILLZONE HELPERS
+    # =========================================================================
+    def _get_current_session(self) -> Optional[str]:
+        """
+        Return the KILLZONES key matching the current bar's ET time, or None.
+        Backtrader feeds from yfinance for NQ=F are in Eastern Time (ET).
+        """
+        dt = self.data_base.datetime.datetime(0)
+        current_time = dt.time()
+
+        for key, zone in KILLZONES.items():
+            sh, sm = map(int, zone.start_et.split(":"))
+            eh, em = map(int, zone.end_et.split(":"))
+            zone_start = dtime(sh, sm)
+            zone_end = dtime(eh, em)
+
+            # Standard window: start <= t < end
+            if zone_start < zone_end:
+                if zone_start <= current_time < zone_end:
+                    return key
+                continue
+
+            # Overnight window (wrap midnight): t >= start OR t < end
+            if current_time >= zone_start or current_time < zone_end:
+                return key
+        return None
+
+    # =========================================================================
+    # ENTRY LOGIC — Buscar oportunidades
+    # =========================================================================
     def _check_entry(self):
         """
         Evalúa si hay una oportunidad de entrada según el manual ICT.
@@ -360,6 +382,13 @@ class ICTStrategy(bt.Strategy):
 
         if self.position:
             return  # Ya estamos en posición
+
+        if self._pending_order is not None:
+            return  # Orden pendiente — evitar doble entrada
+
+        # ── Killzone gate: solo entradas durante NY AM (9:30–11:00 ET) ──────
+        if self._get_current_session() != "ny_am":
+            return
 
         price = self.data_base.close[0]
 
@@ -400,15 +429,15 @@ class ICTStrategy(bt.Strategy):
                 return
 
         # 4. Calcular SL y TP
-        sl_price = protective.bottom - (self.p.sl_buffer_ticks * TICK_VALUE)
+        # 4. Calcular SL y TP — SL exactamente en límite del FVG protector (sin buffer)
+        sl_price = protective.bottom
 
-        # TP en el siguiente nivel de liquidez arriba
+        # TP en el siguiente nivel de liquidez arriba (buyside: swings, PDH, equal highs)
         buyside = self.liquidity_tracker.get_nearest_buyside(price)
-        if buyside:
-            tp_price = buyside[0].price
-        else:
-            # TP default: 2x ATR
-            tp_price = price + (self.atr[0] * 2)
+        if not buyside:
+            # Sin nivel de liquidez disponible — skip trade (sin fallback a ATR)
+            return
+        tp_price = buyside[0].price
 
         # 5. Preflight check
         sl_points = price - sl_price
@@ -474,23 +503,25 @@ class ICTStrategy(bt.Strategy):
         if protective is None:
             return
 
-        # 3. ¿Estamos "on discount"?
+        # 3. ¿Estamos "on premium"? (para SHORT, evitar zona discount)
         if self._recent_swing_low and self._recent_swing_high:
             zone = classify_discount_premium(
-                price, self._recent_swing_high, self._recent_swing_low,
+                price, self._recent_swing_low, self._recent_swing_high,
                 self.p.discount_pct,
             )
-            if zone in ("premium", "extreme_premium"):
+            if zone in ("discount",):
                 return
 
         # 4. Calcular SL y TP
-        sl_price = protective.top + (self.p.sl_buffer_ticks * TICK_VALUE)
+        # 4. Calcular SL y TP — SL exactamente en límite del FVG protector (sin buffer)
+        sl_price = protective.top
 
+        # TP en el siguiente nivel de liquidez abajo (sellside: swings, PDL, equal lows)
         sellside = self.liquidity_tracker.get_nearest_sellside(price)
-        if sellside:
-            tp_price = sellside[0].price
-        else:
-            tp_price = price - (self.atr[0] * 2)
+        if not sellside:
+            # Sin nivel de liquidez disponible — skip trade (sin fallback a ATR)
+            return
+        tp_price = sellside[0].price
 
         # 5. Preflight check
         sl_points = sl_price - price
@@ -597,9 +628,8 @@ class ICTStrategy(bt.Strategy):
         # --- CHECK 4: Break Even ---
         if tp_total > 0 and unrealized_pnl >= tp_total * self.p.break_even_pct:
             # ¿El precio está girando?  Check si FVGs a favor se están rompiendo
+            # Note: fvg_tracker.update() was already called in _update_fvgs() this bar
             if self._protective_fvg is not None:
-                self.fvg_tracker.update(high, low, price)
-
                 if is_long:
                     # Si Bullish FVGs de soporte se rompen -> BE
                     supporting_broken = any(
@@ -744,6 +774,19 @@ class ICTStrategy(bt.Strategy):
             self.close()
             return
 
+        # ── Session-based close: force close on NY Lunch entry (12:00 ET) ───
+        if self.position:
+            _sk = self._get_current_session()
+            _kz = KILLZONES.get(_sk) if _sk else None
+            if _kz is not None and _kz.close_on_enter:
+                self.log(
+                    f"FORCED CLOSE: {_kz.name} killzone ({_kz.start_et} ET)",
+                    "EXIT",
+                )
+                self._exit_reason = f"Session Close ({_kz.name})"
+                self.close()
+                return
+
         # Check if within NYSE trading hours (9:30 ET - close)
         if not self._is_trading_hours():
             # Outside hours: do not open new positions
@@ -756,7 +799,9 @@ class ICTStrategy(bt.Strategy):
         if self.position:
             self._manage_position()
         else:
-            self._check_entry()
+            # Do not open new positions if we're in the 5-min forced-close buffer
+            if not self._should_force_close():
+                self._check_entry()
 
     # =========================================================================
     # ORDER NOTIFICATIONS
@@ -775,6 +820,9 @@ class ICTStrategy(bt.Strategy):
                     f"Size={order.executed.size} | Cost=${order.executed.comm:.2f}",
                     "ORDER"
                 )
+            # Capture actual fill price for exit trades (position closed after this)
+            if self._entry_price is not None and not self.position:
+                self._actual_exit_price = order.executed.price
             self._pending_order = None
 
         elif order.status in [order.Canceled, order.Margin, order.Rejected]:
@@ -802,7 +850,7 @@ class ICTStrategy(bt.Strategy):
                 "timestamp": self.data_base.datetime.datetime(0),
                 "direction": "long" if trade.long else "short",
                 "entry_price": self._entry_price,
-                "exit_price": self.data_base.close[0],
+                "exit_price": self._actual_exit_price if self._actual_exit_price is not None else self.data_base.close[0],
                 "sl_price": self._sl_price,
                 "tp_price": self._tp_price,
                 "pnl_gross": pnl,
@@ -821,6 +869,7 @@ class ICTStrategy(bt.Strategy):
             self._entry_time = None
             self._exit_reason = ""
             self._protective_fvg = None
+            self._actual_exit_price = None
 
     # =========================================================================
     # STOP — Llamado al finalizar el backtest

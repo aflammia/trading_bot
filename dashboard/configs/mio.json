@@ -1,0 +1,22 @@
+{
+  "name": "mio",
+  "initial_capital": 50000.0,
+  "max_daily_loss": 650.0,
+  "max_trades_per_day": 5,
+  "default_contracts": 5,
+  "fvg_lookback_1h": 10,
+  "fvg_lookback_15m": 16,
+  "fvg_lookback_5m": 24,
+  "fvg_lookback_1m": 30,
+  "fvg_max_1h": 4,
+  "fvg_max_15m": 4,
+  "fvg_max_5m": 3,
+  "fvg_max_1m": 3,
+  "fvg_search_range": 550,
+  "structure_lookback": 6,
+  "break_even_pct": 0.6,
+  "close_at_pct": 0.9,
+  "big_loss_threshold": 350.0,
+  "big_win_threshold": 900.0,
+  "saved_at": "2026-03-15T20:08:11.059705"
+}

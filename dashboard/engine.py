@@ -27,7 +27,7 @@ from config.settings import (
     OOS_TEST_START, OOS_TEST_END,
     SYMBOL, ASSET_NAME, POINT_VALUE, TICK_VALUE,
     DEFAULT_CONTRACTS, MAX_DAILY_LOSS, MAX_TRADES_PER_DAY,
-    MAX_BACKTEST_DAYS, MULTI_TF_FVG_TIMEFRAMES,
+    MAX_BACKTEST_DAYS, MULTI_TF_FVG_TIMEFRAMES, FVG_MULTI_TF_CONFIGS,
 )
 from data.downloader import download_data, download_multi_timeframe, resample_ohlcv
 from backtest import run_backtest
@@ -56,13 +56,19 @@ DEFAULT_CONFIG = {
     "max_daily_loss": MAX_DAILY_LOSS,
     "max_trades_per_day": MAX_TRADES_PER_DAY,
     "default_contracts": DEFAULT_CONTRACTS,
-    "fvg_lookback": 50,
+    # Per-timeframe FVG lookback (bars to scan in each TF)
+    "fvg_lookback_1h": 10,
+    "fvg_lookback_15m": 16,
+    "fvg_lookback_5m": 24,
+    "fvg_lookback_1m": 30,
+    # Per-timeframe max active FVGs
     "fvg_max_1h": 4,
+    "fvg_max_15m": 4,
+    "fvg_max_5m": 3,
+    "fvg_max_1m": 3,
     "fvg_search_range": 400,
     "structure_lookback": 6,
-    "atr_period": 14,
-    "sl_buffer_ticks": 4,
-    "break_even_pct": 0.50,
+    "break_even_pct": 0.60,
     "close_at_pct": 0.90,
     "big_loss_threshold": 400.0,
     "big_win_threshold": 800.0,
@@ -76,7 +82,6 @@ PRESET_CONFIGS = {
         "max_daily_loss": 400.0,
         "max_trades_per_day": 1,
         "big_loss_threshold": 300.0,
-        "sl_buffer_ticks": 6,
     },
     "Moderado": {
         **DEFAULT_CONFIG,
@@ -90,7 +95,6 @@ PRESET_CONFIGS = {
         "max_trades_per_day": 3,
         "big_loss_threshold": 500.0,
         "big_win_threshold": 1000.0,
-        "sl_buffer_ticks": 2,
     },
 }
 
@@ -120,12 +124,16 @@ def list_configs() -> List[dict]:
 
 
 def load_config(name: str) -> dict:
-    """Load a configuration by name."""
+    """Load a configuration by name. Returns DEFAULT_CONFIG if not found."""
     fname = name.replace(" ", "_").lower() + ".json"
     path = os.path.join(CONFIGS_DIR, fname)
     if os.path.exists(path):
         with open(path) as f:
             return json.load(f)
+    import logging
+    logging.getLogger(__name__).warning(
+        "Config '%s' not found at %s — using DEFAULT_CONFIG.", name, path
+    )
     return DEFAULT_CONFIG.copy()
 
 
@@ -179,13 +187,14 @@ def load_multi_tf_data(
 def run_multi_tf_fvg_analysis(
     data_dict: Dict[str, pd.DataFrame],
     current_price: float = None,
+    fvg_configs: dict = None,
 ) -> MultiTFAnalyzer:
     """
     Run multi-timeframe FVG analysis on loaded data.
 
     Returns the analyzer with all detected FVGs.
     """
-    analyzer = MultiTFAnalyzer()
+    analyzer = MultiTFAnalyzer(fvg_configs=fvg_configs)
 
     # If no current price, use latest close from highest available TF
     if current_price is None:
@@ -219,13 +228,10 @@ def execute_backtest(
         "max_daily_loss": config.get("max_daily_loss", MAX_DAILY_LOSS),
         "max_trades_per_day": config.get("max_trades_per_day", MAX_TRADES_PER_DAY),
         "default_contracts": config.get("default_contracts", DEFAULT_CONTRACTS),
-        "fvg_lookback": config.get("fvg_lookback", 50),
         "fvg_max_1h": config.get("fvg_max_1h", 4),
         "fvg_search_range": config.get("fvg_search_range", 400),
         "structure_lookback": config.get("structure_lookback", 6),
-        "atr_period": config.get("atr_period", 14),
-        "sl_buffer_ticks": config.get("sl_buffer_ticks", 4),
-        "break_even_pct": config.get("break_even_pct", 0.50),
+        "break_even_pct": config.get("break_even_pct", 0.60),
         "close_at_pct": config.get("close_at_pct", 0.90),
         "big_loss_threshold": config.get("big_loss_threshold", 400.0),
         "big_win_threshold": config.get("big_win_threshold", 800.0),
@@ -253,7 +259,14 @@ def execute_backtest(
     if multi_tf_data:
         try:
             current_price = float(df["Close"].iloc[-1]) if not df.empty else None
-            analyzer = run_multi_tf_fvg_analysis(multi_tf_data, current_price)
+            # Build per-TF FVG config from user's slider values
+            fvg_configs_override = {
+                "1h":  {**FVG_MULTI_TF_CONFIGS.get("1h",  {}), "max_fvgs": config.get("fvg_max_1h",  4), "lookback_bars": config.get("fvg_lookback_1h",  10)},
+                "15m": {**FVG_MULTI_TF_CONFIGS.get("15m", {}), "max_fvgs": config.get("fvg_max_15m", 4), "lookback_bars": config.get("fvg_lookback_15m", 16)},
+                "5m":  {**FVG_MULTI_TF_CONFIGS.get("5m",  {}), "max_fvgs": config.get("fvg_max_5m",  3), "lookback_bars": config.get("fvg_lookback_5m",  24)},
+                "1m":  {**FVG_MULTI_TF_CONFIGS.get("1m",  {}), "max_fvgs": config.get("fvg_max_1m",  3), "lookback_bars": config.get("fvg_lookback_1m",  30)},
+            }
+            analyzer = run_multi_tf_fvg_analysis(multi_tf_data, current_price, fvg_configs=fvg_configs_override)
             fvgs_data = analyzer.get_all_fvgs_for_display()
             fvg_summary = analyzer.get_summary()
         except Exception as e:

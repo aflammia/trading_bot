@@ -96,7 +96,7 @@ def render():
                 xaxis_title="",
                 showlegend=False,
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.warning("Sin datos de equity.")
 
@@ -129,7 +129,7 @@ def render():
         ))
         fig_gauge = apply_plotly_theme(fig_gauge)
         fig_gauge.update_layout(height=350)
-        st.plotly_chart(fig_gauge, use_container_width=True)
+        st.plotly_chart(fig_gauge, width="stretch")
 
     # ── P&L Bars + Recent Trades ────────────────────────────────
     col_pnl, col_trades = st.columns([1, 1], gap="large")
@@ -151,7 +151,7 @@ def render():
                 xaxis_title="Trade #",
                 yaxis_title="P&L ($)",
             )
-            st.plotly_chart(fig_pnl, use_container_width=True)
+            st.plotly_chart(fig_pnl, width="stretch")
 
     with col_trades:
         st.subheader("Últimos Trades")
@@ -170,7 +170,7 @@ def render():
 
             available_cols = [c for c in display_cols if c in trades_df.columns]
             recent = trades_df[available_cols].tail(10).iloc[::-1]
-            st.dataframe(recent, use_container_width=True, height=280)
+            st.dataframe(recent, width="stretch", height=280)
         else:
             st.info("Sin trades.")
 

@@ -53,6 +53,10 @@ def get_db():
     if _db is not None:
         return _db
 
+    if not MONGODB_URI:
+        print("[DB] WARNING: MONGODB_URI no configurado. Database features disabled.")
+        return None
+
     try:
         _client = MongoClient(
             MONGODB_URI,

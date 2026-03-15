@@ -165,7 +165,10 @@ class MultiTFAnalyzer:
     5. Generates entry signals when FVGs break on entry timeframes.
     """
 
-    def __init__(self):
+    def __init__(self, fvg_configs: dict = None):
+        # Per-TF config (allows dashboard sliders to override detection params)
+        self.fvg_configs = fvg_configs if fvg_configs is not None else FVG_MULTI_TF_CONFIGS
+
         # Separate tracker per timeframe
         self.trackers: Dict[str, FVGTracker] = {}
         for tf in MULTI_TF_FVG_TIMEFRAMES:
@@ -179,6 +182,18 @@ class MultiTFAnalyzer:
 
         # Previously broken FVGs (for entry detection)
         self._prev_broken_ids: set = set()
+        self._known_fvg_keys: set = set()
+
+    @staticmethod
+    def _fvg_key(timeframe: str, fvg: FairValueGap) -> tuple:
+        """Stable key for de-duplication and signal tracking."""
+        return (
+            timeframe,
+            fvg.fvg_type.value,
+            round(float(fvg.top), 4),
+            round(float(fvg.bottom), 4),
+            str(fvg.timestamp),
+        )
 
     def detect_fvgs_for_timeframe(
         self,
@@ -206,8 +221,13 @@ class MultiTFAnalyzer:
         if timeframe not in MULTI_TF_FVG_TIMEFRAMES:
             return []
 
-        config = FVG_MULTI_TF_CONFIGS.get(timeframe, {})
+        config = self.fvg_configs.get(timeframe, FVG_MULTI_TF_CONFIGS.get(timeframe, {}))
         weight = MULTI_TF_FVG_WEIGHTS.get(timeframe, 1.0)
+
+        # Slice df to per-TF lookback window (time-based, configurable from dashboard)
+        lookback_bars = config.get("lookback_bars")
+        if lookback_bars is not None and len(df) > lookback_bars:
+            df = df.iloc[-lookback_bars:]
 
         # Detect raw FVGs
         raw_fvgs = detect_fvgs(df, timeframe=timeframe)
@@ -230,6 +250,11 @@ class MultiTFAnalyzer:
         # Wrap as MultiTFFVG
         new_multi = []
         for fvg in filtered:
+            fvg_key = self._fvg_key(timeframe, fvg)
+            if fvg_key in self._known_fvg_keys:
+                continue
+            self._known_fvg_keys.add(fvg_key)
+
             mt_fvg = MultiTFFVG(
                 fvg=fvg,
                 timeframe=timeframe,
@@ -239,6 +264,8 @@ class MultiTFAnalyzer:
             new_multi.append(mt_fvg)
 
         self.all_multi_tf_fvgs.extend(new_multi)
+        if new_multi:
+            self._compute_nesting()
         return new_multi
 
     def analyze_all_timeframes(
@@ -332,7 +359,7 @@ class MultiTFAnalyzer:
 
         # Find newly broken FVGs on entry timeframes
         for mt_fvg in self.all_multi_tf_fvgs:
-            fvg_id = id(mt_fvg.fvg)
+            fvg_id = self._fvg_key(mt_fvg.timeframe, mt_fvg.fvg)
 
             if mt_fvg.timeframe not in ENTRY_TIMEFRAMES:
                 continue

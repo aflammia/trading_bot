@@ -97,7 +97,7 @@ def render():
     # Color the P&L column
     st.dataframe(
         display_df,
-        use_container_width=True,
+        width="stretch",
         height=400,
     )
 
@@ -132,7 +132,7 @@ def render():
             xaxis_title="P&L ($)",
             yaxis_title="Frecuencia",
         )
-        st.plotly_chart(fig_hist, use_container_width=True)
+        st.plotly_chart(fig_hist, width="stretch")
 
     with col_daily:
         st.subheader("Daily P&L")
@@ -148,7 +148,7 @@ def render():
             ))
             fig_daily = apply_plotly_theme(fig_daily)
             fig_daily.update_layout(height=350, xaxis_title="Fecha", yaxis_title="P&L ($)")
-            st.plotly_chart(fig_daily, use_container_width=True)
+            st.plotly_chart(fig_daily, width="stretch")
         else:
             st.info("Sin datos diarios.")
 
@@ -171,6 +171,6 @@ def render():
             yaxis_title="P&L ($)",
             xaxis=dict(dtick=1),
         )
-        st.plotly_chart(fig_hourly, use_container_width=True)
+        st.plotly_chart(fig_hourly, width="stretch")
     else:
         st.info("Sin datos horarios disponibles.")

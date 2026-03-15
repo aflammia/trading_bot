@@ -34,7 +34,7 @@ def render():
         st.markdown("**Quick Presets**")
         # Use separate rows for better spacing
         for name, preset in PRESET_CONFIGS.items():
-            if st.button(f"{name}", key=f"preset_{name}", use_container_width=True):
+            if st.button(f"{name}", key=f"preset_{name}", width="stretch"):
                 config = preset.copy()
                 st.session_state["active_config"] = config
                 st.success(f"Preset '{name}' cargado")
@@ -56,7 +56,7 @@ def render():
     with col_save:
         st.markdown("**Save Config**")
         save_name = st.text_input("Nombre", value=config.get("name", "Mi Bot"), label_visibility="collapsed")
-        if st.button("Save", use_container_width=True):
+        if st.button("Save", width="stretch"):
             config["name"] = save_name
             save_config(config, save_name)
             st.success(f"Config '{save_name}' guardada!")
@@ -118,30 +118,72 @@ def render():
 
     with tab_fvg:
         st.subheader("Fair Value Gaps (FVG)")
+        st.markdown("**Lookback por Timeframe** (velas a escanear en cada TF)")
         c1, c2 = st.columns(2, gap="large")
 
         with c1:
-            config["fvg_lookback"] = st.slider(
-                "FVG Lookback (bars)",
-                min_value=10, max_value=100,
-                value=int(config.get("fvg_lookback", 50)),
-                help="Cantidad de velas a revisar para detectar FVGs.",
+            config["fvg_lookback_1h"] = st.slider(
+                "Lookback 1H (barras)",
+                min_value=5, max_value=50,
+                value=int(config.get("fvg_lookback_1h", 10)),
+                help="Velas de 1H a revisar. ~10 barras = ~10 horas de historia.",
             )
-            config["fvg_max_1h"] = st.slider(
-                "Max FVGs Activos (1H)",
-                min_value=1, max_value=10,
-                value=int(config.get("fvg_max_1h", 4)),
-                help="Máximo de FVGs a rastrear simultáneamente.",
+            config["fvg_lookback_5m"] = st.slider(
+                "Lookback 5M (barras)",
+                min_value=5, max_value=50,
+                value=int(config.get("fvg_lookback_5m", 24)),
+                help="Velas de 5M a revisar. ~24 barras = ~2 horas de historia.",
             )
 
         with c2:
-            config["fvg_search_range"] = st.slider(
-                "Rango Búsqueda FVG (puntos)",
-                min_value=100, max_value=800,
-                value=int(config.get("fvg_search_range", 400)),
-                step=50,
-                help="Distancia máxima desde precio actual para buscar FVGs.",
+            config["fvg_lookback_15m"] = st.slider(
+                "Lookback 15M (barras)",
+                min_value=5, max_value=50,
+                value=int(config.get("fvg_lookback_15m", 16)),
+                help="Velas de 15M a revisar. ~16 barras = ~4 horas de historia.",
             )
+            config["fvg_lookback_1m"] = st.slider(
+                "Lookback 1M (barras)",
+                min_value=5, max_value=50,
+                value=int(config.get("fvg_lookback_1m", 30)),
+                help="Velas de 1M a revisar. ~30 barras = ~30 minutos de historia.",
+            )
+
+        st.markdown("**Max FVGs Activos por Timeframe**")
+        c1, c2, c3, c4 = st.columns(4, gap="medium")
+        with c1:
+            config["fvg_max_1h"] = st.slider(
+                "Max 1H", min_value=1, max_value=10,
+                value=int(config.get("fvg_max_1h", 4)),
+                help="Máximo de FVGs activos rastreados en 1H.",
+            )
+        with c2:
+            config["fvg_max_15m"] = st.slider(
+                "Max 15M", min_value=1, max_value=10,
+                value=int(config.get("fvg_max_15m", 4)),
+                help="Máximo de FVGs activos rastreados en 15M.",
+            )
+        with c3:
+            config["fvg_max_5m"] = st.slider(
+                "Max 5M", min_value=1, max_value=10,
+                value=int(config.get("fvg_max_5m", 3)),
+                help="Máximo de FVGs activos rastreados en 5M.",
+            )
+        with c4:
+            config["fvg_max_1m"] = st.slider(
+                "Max 1M", min_value=1, max_value=10,
+                value=int(config.get("fvg_max_1m", 3)),
+                help="Máximo de FVGs activos rastreados en 1M.",
+            )
+
+        st.markdown("**Rango de Búsqueda**")
+        config["fvg_search_range"] = st.slider(
+            "Rango Búsqueda FVG (puntos)",
+            min_value=100, max_value=800,
+            value=int(config.get("fvg_search_range", 400)),
+            step=50,
+            help="Distancia máxima desde precio actual para buscar FVGs relevantes.",
+        )
 
     with tab_structure:
         st.subheader("Estructura de Mercado")
@@ -152,12 +194,7 @@ def render():
             value=int(config.get("structure_lookback", 6)),
             help="Velas de 4H para determinar tendencia.",
         )
-        config["atr_period"] = st.slider(
-            "Período ATR",
-            min_value=5, max_value=30,
-            value=int(config.get("atr_period", 14)),
-            help="Período para Average True Range.",
-        )
+        st.info("El sesgo se calcula desde tendencia 4H + FVG breaks + liquidez — **sin ATR**.")
 
     with tab_sessions:
         st.subheader("Horarios de Trading")
@@ -180,18 +217,12 @@ def render():
         c1, c2 = st.columns(2, gap="large")
 
         with c1:
-            config["sl_buffer_ticks"] = st.slider(
-                "SL Buffer (ticks)",
-                min_value=1, max_value=10,
-                value=int(config.get("sl_buffer_ticks", 4)),
-                help="Ticks de margen sobre/bajo el FVG protector para stop loss.",
-            )
             config["break_even_pct"] = st.slider(
                 "Break-Even Trigger (%)",
                 min_value=0.20, max_value=0.80,
-                value=float(config.get("break_even_pct", 0.50)),
+                value=float(config.get("break_even_pct", 0.60)),
                 step=0.05,
-                help="Mover SL a break-even cuando profit alcanza este % del TP.",
+                help="Cierra al break-even cuando profit ≥ este % del TP Y un FVG de soporte se rompe.",
             )
 
         with c2:
@@ -201,6 +232,14 @@ def render():
                 value=float(config.get("close_at_pct", 0.90)),
                 step=0.05,
                 help="Cerrar trade si alcanza este % del take profit.",
+            )
+
+        # Validate that break_even fires before close_at
+        if config["break_even_pct"] >= config["close_at_pct"]:
+            st.warning(
+                f"⚠️ Break-Even ({config['break_even_pct']:.0%}) ≥ Cerrar al TP "
+                f"({config['close_at_pct']:.0%}): el break-even nunca se activará. "
+                "Reduce el Break-Even o sube el Cerrar al %."
             )
 
     with tab_advanced:
@@ -230,7 +269,7 @@ def render():
                 data=json.dumps(config, indent=2, default=str),
                 file_name=f"{config.get('name', 'config').replace(' ', '_')}.json",
                 mime="application/json",
-                use_container_width=True,
+                width="stretch",
             )
         with c2:
             uploaded = st.file_uploader("Import Config", type=["json"])

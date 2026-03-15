@@ -96,7 +96,7 @@ def render():
     if show_volume:
         fig.update_yaxes(title_text="Vol", row=2, col=1)
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # ── Trade Context Panel ─────────────────────────────────────
     if not trades_df.empty:
@@ -108,7 +108,7 @@ def render():
         cols_to_show = [c for c in ["timestamp", "direction", "entry_price", "exit_price",
                                       "sl_price", "tp_price", pnl_col, "reason"] if c in display_df.columns]
         if cols_to_show:
-            st.dataframe(display_df[cols_to_show], use_container_width=True)
+            st.dataframe(display_df[cols_to_show], width="stretch")
 
 
 def _add_trade_markers(fig, trades_df, price_df):

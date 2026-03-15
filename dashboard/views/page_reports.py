@@ -54,7 +54,7 @@ def _render_pdf_report(metrics, trades_df: pd.DataFrame, config: dict):
 
     include_ai = st.checkbox("Incluir analisis AI (Gemini)", value=bool(gemini_key))
 
-    if st.button("Generar PDF Profesional", type="primary", use_container_width=True):
+    if st.button("Generar PDF Profesional", type="primary", width="stretch"):
         with st.spinner("Generando informe profesional..."):
             ai_analysis = ""
             if include_ai and gemini_key:
@@ -70,7 +70,7 @@ def _render_pdf_report(metrics, trades_df: pd.DataFrame, config: dict):
                     data=pdf_bytes,
                     file_name=f"chuky_report_{datetime.now():%Y%m%d_%H%M}.pdf",
                     mime="application/pdf",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
     # Preview
@@ -141,9 +141,9 @@ DATOS DEL BACKTEST:
 CONFIGURACION:
 - Contratos: {config.get('default_contracts', 3)}
 - Max Daily Loss: ${config.get('max_daily_loss', 550):,.0f}
-- SL Buffer: {config.get('sl_buffer_ticks', 4)} ticks
-- TP Multiplier: {config.get('tp_multiplier', 2.0)}x
-- Break Even: {config.get('break_even_pct', 0.50):.0%}
+- FVG Lookback 1H/15M/5M/1M: {config.get('fvg_lookback_1h', 10)}/{config.get('fvg_lookback_15m', 16)}/{config.get('fvg_lookback_5m', 24)}/{config.get('fvg_lookback_1m', 30)}
+- Max FVG 1H/15M/5M/1M: {config.get('fvg_max_1h', 4)}/{config.get('fvg_max_15m', 4)}/{config.get('fvg_max_5m', 3)}/{config.get('fvg_max_1m', 3)}
+- Break Even: {config.get('break_even_pct', 0.60):.0%}
 
 Estructura tu respuesta EXACTAMENTE asi (usa estos titulos):
 
@@ -194,10 +194,7 @@ def _build_professional_pdf(metrics, trades_df, config, ai_analysis: str = "") -
             '\u00b1': '+/-', '\u2260': '!=', '\u221e': 'inf',
             '\U0001f608': '', '\U0001f4c8': '', '\U0001f4c9': '',
             '\u2705': '[OK]', '\u274c': '[X]', '\u26a0\ufe0f': '[!]', '\u26a0': '[!]',
-            '\u00e1': 'a', '\u00e9': 'e', '\u00ed': 'i', '\u00f3': 'o', '\u00fa': 'u',
-            '\u00f1': 'n', '\u00c1': 'A', '\u00c9': 'E', '\u00cd': 'I', '\u00d3': 'O',
-            '\u00da': 'U', '\u00d1': 'N', '\u00fc': 'u', '\u00dc': 'U',
-            '\u00bf': '?', '\u00a1': '!',
+            '\u00bf': '\u00bf', '\u00a1': '\u00a1',
         }
 
         def _safe(text: str) -> str:
@@ -436,16 +433,15 @@ def _build_professional_pdf(metrics, trades_df, config, ai_analysis: str = "") -
                 ("Max Trades/Dia", f"{config.get('max_trades_per_day', 2)}"),
             ]),
             ("Entry (ICT)", [
-                ("FVG Min Size %ile", f"{config.get('fvg_min_size_percentile', 70)}"),
-                ("Lookback Bars", f"{config.get('fvg_lookback_bars', 20)}"),
-                ("Structure Lookback", f"{config.get('structure_lookback', 50)}"),
-                ("Require Sweep", f"{config.get('require_sweep', True)}"),
-                ("Require BOS", f"{config.get('require_bos', True)}"),
+                ("FVG Lookback 1H/15M/5M/1M", f"{config.get('fvg_lookback_1h', 10)}/{config.get('fvg_lookback_15m', 16)}/{config.get('fvg_lookback_5m', 24)}/{config.get('fvg_lookback_1m', 30)}"),
+                ("Max FVG 1H/15M/5M/1M", f"{config.get('fvg_max_1h', 4)}/{config.get('fvg_max_15m', 4)}/{config.get('fvg_max_5m', 3)}/{config.get('fvg_max_1m', 3)}"),
+                ("FVG Search Range", f"{config.get('fvg_search_range', 400)} pts"),
+                ("Structure Lookback", f"{config.get('structure_lookback', 6)}"),
             ]),
             ("Exit Management", [
-                ("SL Buffer (ticks)", f"{config.get('sl_buffer_ticks', 4)}"),
-                ("TP Multiplier", f"{config.get('tp_multiplier', 2.0)}x"),
-                ("Break Even @", f"{config.get('break_even_pct', 0.50):.0%}"),
+                ("SL Placement", "FVG boundary (sin buffer)"),
+                ("TP Source", "Liquidez (PDH/PDL/Swings)"),
+                ("Break Even @", f"{config.get('break_even_pct', 0.60):.0%} + FVG break"),
                 ("Close @ TP %", f"{config.get('close_at_pct', 0.90):.0%}"),
             ]),
         ]
@@ -544,7 +540,7 @@ def _render_report_preview(metrics, trades_df, config):
             show_cols = [c for c in ["direction", "entry_price", "exit_price",
                                       pnl_col, "contracts", "reason"]
                          if c in trades_df.columns]
-            st.dataframe(trades_df[show_cols].tail(10), use_container_width=True)
+            st.dataframe(trades_df[show_cols].tail(10), width="stretch")
         else:
             st.info("Sin trades disponibles.")
 
@@ -570,7 +566,7 @@ def _render_csv_export(metrics, trades_df: pd.DataFrame, config: dict):
                 data=csv_trades,
                 file_name=f"chuky_trades_{datetime.now():%Y%m%d}.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
             )
 
     with col2:
@@ -590,7 +586,7 @@ def _render_csv_export(metrics, trades_df: pd.DataFrame, config: dict):
                 data=csv_equity,
                 file_name=f"chuky_equity_{datetime.now():%Y%m%d}.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
             )
         else:
             st.info("Sin datos de equity.")
@@ -621,7 +617,7 @@ def _render_csv_export(metrics, trades_df: pd.DataFrame, config: dict):
         data=csv_metrics,
         file_name=f"chuky_metrics_{datetime.now():%Y%m%d}.csv",
         mime="text/csv",
-        use_container_width=True,
+        width="stretch",
     )
 
     # Config JSON download
@@ -633,7 +629,7 @@ def _render_csv_export(metrics, trades_df: pd.DataFrame, config: dict):
         data=config_json,
         file_name=f"chuky_config_{datetime.now():%Y%m%d}.json",
         mime="application/json",
-        use_container_width=True,
+        width="stretch",
     )
 
 
@@ -690,5 +686,5 @@ def _render_config_comparison(current_config: dict):
     if df.empty:
         st.success("Las configuraciones son identicas.")
     else:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
         st.caption(f"{len(df)} parametros diferentes.")

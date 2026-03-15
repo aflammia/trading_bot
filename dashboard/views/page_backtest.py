@@ -30,17 +30,19 @@ from dashboard.engine import (
     run_multi_tf_fvg_analysis,
 )
 from config.settings import MAX_BACKTEST_DAYS, MULTI_TF_FVG_TIMEFRAMES
+from indicators.liquidity import compute_all_session_levels
 
 
 # FVG color mapping by timeframe
+# FVG color mapping by timeframe (opacity decreases with lower TFs for visual hierarchy)
 FVG_COLORS = {
-    "1h":  {"bullish": "rgba(0,200,83,0.15)",  "bearish": "rgba(239,83,80,0.15)",
+    "1h":  {"bullish": "rgba(0,200,83,0.22)",  "bearish": "rgba(239,83,80,0.22)",
              "bullish_border": "#00C853", "bearish_border": "#EF5350"},
-    "15m": {"bullish": "rgba(0,200,83,0.10)",  "bearish": "rgba(239,83,80,0.10)",
+    "15m": {"bullish": "rgba(0,200,83,0.13)",  "bearish": "rgba(239,83,80,0.13)",
              "bullish_border": "#66BB6A", "bearish_border": "#E57373"},
     "5m":  {"bullish": "rgba(0,200,83,0.07)",  "bearish": "rgba(239,83,80,0.07)",
              "bullish_border": "#A5D6A7", "bearish_border": "#EF9A9A"},
-    "1m":  {"bullish": "rgba(0,200,83,0.05)",  "bearish": "rgba(239,83,80,0.05)",
+    "1m":  {"bullish": "rgba(0,200,83,0.04)",  "bearish": "rgba(239,83,80,0.04)",
              "bullish_border": "#C8E6C9", "bearish_border": "#FFCDD2"},
 }
 
@@ -141,19 +143,21 @@ def render():
     with st.expander("Active ICT Parameters (from Bot Builder)"):
         ic1, ic2, ic3 = st.columns(3, gap="large")
         with ic1:
-            st.caption("FVG")
-            st.write(f"- Lookback: {config.get('fvg_lookback', 50)}")
-            st.write(f"- Max FVGs 1H: {config.get('fvg_max_1h', 4)}")
-            st.write(f"- Range: {config.get('fvg_search_range', 400)} pts")
+            st.caption("FVG Lookback / Max")
+            st.write(f"- 1H: {config.get('fvg_lookback_1h', 10)} bars / max {config.get('fvg_max_1h', 4)}")
+            st.write(f"- 15M: {config.get('fvg_lookback_15m', 16)} bars / max {config.get('fvg_max_15m', 4)}")
+            st.write(f"- 5M: {config.get('fvg_lookback_5m', 24)} bars / max {config.get('fvg_max_5m', 3)}")
+            st.write(f"- 1M: {config.get('fvg_lookback_1m', 30)} bars / max {config.get('fvg_max_1m', 3)}")
         with ic2:
             st.caption("Structure")
             st.write(f"- Lookback 4H: {config.get('structure_lookback', 6)}")
-            st.write(f"- ATR Period: {config.get('atr_period', 14)}")
+            st.write(f"- TP: Liquidez / PDH-PDL / Swings")
+            st.write(f"- SL: FVG boundary (sin buffer)")
         with ic3:
             st.caption("Exits")
-            st.write(f"- SL Buffer: {config.get('sl_buffer_ticks', 4)} ticks")
-            st.write(f"- Break Even: {config.get('break_even_pct', 0.50):.0%}")
+            st.write(f"- Break Even: {config.get('break_even_pct', 0.60):.0%} + FVG break")
             st.write(f"- Close at TP: {config.get('close_at_pct', 0.90):.0%}")
+            st.write("- Sessions: NY AM only (9:30–11:00 ET)")
         st.info("To change these parameters, go to **Bot Builder**.")
 
     # -- Action Buttons --
@@ -161,7 +165,7 @@ def render():
 
     with col_run:
         run_clicked = st.button(
-            "Run Backtest", type="primary", use_container_width=True
+            "Run Backtest", type="primary", width="stretch"
         )
 
     with col_save:
@@ -170,7 +174,7 @@ def render():
             value=config.get("name", "My Config"),
             label_visibility="collapsed",
         )
-        if st.button("Save Config", use_container_width=True):
+        if st.button("Save Config", width="stretch"):
             save_config(config, save_name)
             st.success(f"Config '{save_name}' saved.")
 
@@ -261,6 +265,17 @@ def _show_results(result: dict):
         st.metric("Trades", f"{metrics.total_trades}",
                    delta=f"{metrics.trades_per_day:.1f}/day")
 
+    c_ai1, c_ai2 = st.columns([1, 3], gap="large")
+    with c_ai1:
+        if st.button("Analizar con AI", width="stretch"):
+            st.session_state["ai_prefill_prompt"] = (
+                "Analiza este backtest y dame: resumen ejecutivo, fortalezas, debilidades, "
+                "riesgo para prop firm y 5 acciones concretas para mejorar resultados."
+            )
+            st.success("Resumen enviado al AI Analyst. Abre la pagina AI Analyst para continuar.")
+    with c_ai2:
+        st.caption("Pasa el contexto del backtest actual al chat AI con un click.")
+
     # -- Visual Backtest Chart --
     if "price_data" in st.session_state:
         st.markdown("---")
@@ -290,20 +305,37 @@ def _show_results(result: dict):
                 value=False,
                 help="Show only FVGs that influenced trade decisions.",
             )
+            show_session_levels = st.checkbox(
+                "Show previous session H/L",
+                value=True,
+                help="Muestra niveles previos de Asia, London, NY AM y NY PM.",
+            )
 
         # Load chart data for selected resolution
         chart_df = st.session_state["price_data"]
-        if chart_tf != "1h" and "multi_tf_data" in st.session_state:
+        if "multi_tf_data" in st.session_state:
             mtf = st.session_state["multi_tf_data"]
-            if chart_tf in mtf:
-                chart_df = mtf[chart_tf]
+            tf_df = mtf.get(chart_tf)
+            if tf_df is not None and not tf_df.empty:
+                chart_df = tf_df
 
         # Build the interactive chart
-        fig = _build_backtest_chart(chart_df, trades_df, fvgs, show_fvgs, show_decisions)
-        st.plotly_chart(fig, use_container_width=True, config={
+        fig = _build_backtest_chart(
+            chart_df,
+            trades_df,
+            fvgs,
+            show_fvgs,
+            show_decisions,
+            show_session_levels,
+        )
+        st.plotly_chart(fig, width="stretch", config={
             "scrollZoom": True,
             "displayModeBar": True,
-            "modeBarButtonsToAdd": ["drawline", "drawopenpath"],
+            "editable": True,
+            "modeBarButtonsToAdd": [
+                "drawline", "drawopenpath", "drawclosedpath",
+                "drawrect", "drawcircle", "eraseshape",
+            ],
         })
 
     # -- Multi-TF FVG Summary Panel --
@@ -334,7 +366,7 @@ def _show_results(result: dict):
                         fvg_df[display_cols].sort_values(
                             ["timeframe", "timestamp"], ascending=[True, False]
                         ),
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                     )
 
@@ -363,7 +395,7 @@ def _show_results(result: dict):
             )
             fig = apply_plotly_theme(fig)
             fig.update_layout(height=350, yaxis_title="Equity ($)")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         with col_dist:
             st.subheader("P&L Distribution")
@@ -380,7 +412,7 @@ def _show_results(result: dict):
                 fig_hist.update_layout(
                     height=350, xaxis_title="P&L ($)", yaxis_title="Count"
                 )
-                st.plotly_chart(fig_hist, use_container_width=True)
+                st.plotly_chart(fig_hist, width="stretch")
 
     # -- Detailed Metrics --
     with st.expander("Detailed Metrics"):
@@ -418,7 +450,7 @@ def _show_results(result: dict):
                 "contracts", "reason",
             ] if c in trades_df.columns]
             st.dataframe(
-                trades_df[show_cols], use_container_width=True, hide_index=True,
+                trades_df[show_cols], width="stretch", hide_index=True,
             )
 
 
@@ -428,6 +460,7 @@ def _build_backtest_chart(
     fvgs: list,
     show_fvg_tfs: list,
     show_decisions_only: bool,
+    show_session_levels: bool = True,
 ) -> go.Figure:
     """
     Build the interactive candlestick chart with FVG zones and trade markers.
@@ -464,6 +497,49 @@ def _build_backtest_chart(
         ),
         row=1, col=1,
     )
+
+    # -- Previous Session High/Low Levels --
+    if show_session_levels and not df.empty:
+        try:
+            session_df = compute_all_session_levels(df)
+            if session_df.empty:
+                raise ValueError("No session levels computed")
+            last = session_df.iloc[-1]
+            x0, x1 = df.index[0], df.index[-1]
+
+            session_specs = [
+                ("asia", "#7E57C2"),
+                ("london", "#42A5F5"),
+                ("ny_am", "#26A69A"),
+                ("ny_pm", "#FFA726"),
+            ]
+
+            for sname, scolor in session_specs:
+                high_col = f"{sname}_high"
+                low_col = f"{sname}_low"
+                sval_high = last.get(high_col)
+                sval_low = last.get(low_col)
+
+                if pd.notna(sval_high):
+                    fig.add_shape(
+                        type="line",
+                        x0=x0, x1=x1,
+                        y0=float(sval_high), y1=float(sval_high),
+                        line=dict(color=scolor, width=1, dash="dot"),
+                        opacity=0.7,
+                        row=1, col=1,
+                    )
+                if pd.notna(sval_low):
+                    fig.add_shape(
+                        type="line",
+                        x0=x0, x1=x1,
+                        y0=float(sval_low), y1=float(sval_low),
+                        line=dict(color=scolor, width=1, dash="dot"),
+                        opacity=0.7,
+                        row=1, col=1,
+                    )
+        except Exception:
+            pass
 
     # -- Volume Bars --
     if "Volume" in df.columns:
@@ -573,10 +649,10 @@ def _build_backtest_chart(
                         showlegend=False,
                         hovertemplate=(
                             f"<b>ENTRY ({direction.upper()})</b><br>"
-                            f"Price: <br>"
+                            f"Price: {entry_price:.2f}<br>"
                             f"Time: %{{x}}<br>"
-                            f"SL: <br>"
-                            f"TP: <br>"
+                            f"SL: {trade.get('sl_price', 0):.2f}<br>"
+                            f"TP: {trade.get('tp_price', 0):.2f}<br>"
                             f"Contracts: {trade.get('contracts', 0)}"
                             "<extra></extra>"
                         ),
@@ -602,9 +678,9 @@ def _build_backtest_chart(
                         showlegend=False,
                         hovertemplate=(
                             f"<b>EXIT</b><br>"
-                            f"Price: <br>"
+                            f"Price: {exit_price:.2f}<br>"
                             f"Time: %{{x}}<br>"
-                            f"P&L: <br>"
+                            f"P&L: ${pnl:.2f}<br>"
                             f"Reason: {trade.get('reason', 'N/A')}"
                             "<extra></extra>"
                         ),

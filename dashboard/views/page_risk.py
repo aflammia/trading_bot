@@ -63,7 +63,7 @@ def render():
         ))
         fig_gauge = apply_plotly_theme(fig_gauge)
         fig_gauge.update_layout(height=300)
-        st.plotly_chart(fig_gauge, use_container_width=True)
+        st.plotly_chart(fig_gauge, width="stretch")
 
     with col_ks:
         st.subheader("Kill Switches")
@@ -104,7 +104,7 @@ def render():
                          annotation_text="Límite DD $2,500")
         fig_dd = apply_plotly_theme(fig_dd)
         fig_dd.update_layout(height=300, yaxis_title="Drawdown ($)")
-        st.plotly_chart(fig_dd, use_container_width=True)
+        st.plotly_chart(fig_dd, width="stretch")
 
     # ── Position History + Streak Analysis ──────────────────────
     col_pos, col_streak = st.columns(2, gap="large")
@@ -120,7 +120,7 @@ def render():
         ))
         fig_pos = apply_plotly_theme(fig_pos)
         fig_pos.update_layout(height=300, xaxis_title="Trade #", yaxis_title="P&L ($)")
-        st.plotly_chart(fig_pos, use_container_width=True)
+        st.plotly_chart(fig_pos, width="stretch")
 
     with col_streak:
         st.subheader("Streak Analysis")

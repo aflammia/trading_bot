@@ -78,7 +78,7 @@ def render():
                                    annotation_text=f"Mediana: ${mc.final_pnl_p50:+,.0f}")
                 fig_dist = apply_plotly_theme(fig_dist)
                 fig_dist.update_layout(height=350, xaxis_title="P&L Final ($)", yaxis_title="Frecuencia")
-                st.plotly_chart(fig_dist, use_container_width=True)
+                st.plotly_chart(fig_dist, width="stretch")
 
             # Max DD distribution
             if mc.all_max_dds is not None:
@@ -95,7 +95,7 @@ def render():
                                  annotation_text="Límite $2,500")
                 fig_dd = apply_plotly_theme(fig_dd)
                 fig_dd.update_layout(height=300, xaxis_title="Max Drawdown ($)", yaxis_title="Frecuencia")
-                st.plotly_chart(fig_dd, use_container_width=True)
+                st.plotly_chart(fig_dd, width="stretch")
 
             # Summary
             st.markdown(
@@ -155,7 +155,7 @@ def render():
                 ))
                 fig_top = apply_plotly_theme(fig_top)
                 fig_top.update_layout(height=250, yaxis_title="P&L ($)")
-                st.plotly_chart(fig_top, use_container_width=True)
+                st.plotly_chart(fig_top, width="stretch")
 
     # ── GO/NO-GO Checklist ──────────────────────────────────────
     with tab_checklist:

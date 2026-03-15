@@ -63,10 +63,8 @@ EXAM_THRESHOLD_PROFIT = 2_500.0         # Después de +$2,500, el piso sube
 # R:R y GESTIÓN DE POSICIÓN
 # =============================================================================
 MIN_RISK_REWARD_RATIO = 1.0    # Mínimo 1:1
-BREAK_EVEN_TRIGGER_PCT = 0.50  # Activar BE cuando profit >= 50% de TP
+BREAK_EVEN_TRIGGER_PCT = 0.60  # Activar BE cuando profit >= 60% de TP (+ FVG break)
 CLOSE_AT_PCT_OF_TP = 0.90      # Cerrar si se alcanza 90% del TP
-SL_BUFFER_TICKS = 4            # Ticks de buffer sobre/bajo el FVG protector
-
 # Reducción de contratos tras malas rachas
 BAD_STREAK_DAYS = 3            # Si pierdes X días seguidos
 BAD_STREAK_LOSS_PER_DAY = 300  # Con pérdidas de al menos esto → reducir
@@ -97,15 +95,17 @@ PREMARKET_START_VET = "08:00"
 class KillZone:
     """Definición de una sesión/killzone ICT."""
     name: str
-    start_et: str   # HH:MM en ET
-    end_et: str     # HH:MM en ET
+    start_et: str        # HH:MM en ET
+    end_et: str          # HH:MM en ET
+    allow_entry: bool = False    # ¿Se permite abrir posiciones en esta killzone?
+    close_on_enter: bool = False  # ¿Cerrar posición al entrar en esta killzone?
 
 KILLZONES = {
-    "asia":     KillZone("Asia",       "20:00", "00:00"),
-    "london":   KillZone("London",     "02:00", "05:00"),
-    "ny_am":    KillZone("NY AM",      "09:30", "11:00"),
-    "ny_lunch": KillZone("NY Lunch",   "12:00", "13:00"),
-    "ny_pm":    KillZone("NY PM",      "13:30", "16:00"),
+    "asia":     KillZone("Asia",       "20:00", "00:00", allow_entry=False, close_on_enter=False),
+    "london":   KillZone("London",     "02:00", "05:00", allow_entry=False, close_on_enter=False),
+    "ny_am":    KillZone("NY AM",      "09:30", "11:00", allow_entry=True,  close_on_enter=False),
+    "ny_lunch": KillZone("NY Lunch",   "12:00", "13:00", allow_entry=False, close_on_enter=True),
+    "ny_pm":    KillZone("NY PM",      "13:30", "16:00", allow_entry=False, close_on_enter=False),
 }
 
 
@@ -168,10 +168,6 @@ WFA_MAX_DEGRADATION = 0.40    # 40% de degradación máxima permitida
 # Monte Carlo
 MONTE_CARLO_ITERATIONS = 1_000
 
-# ATR para cálculos de volatilidad
-ATR_PERIOD = 14
-
-
 # =============================================================================
 # FUNDED ACCOUNT (post-examen)
 # =============================================================================
@@ -232,10 +228,10 @@ MULTI_TF_FVG_WEIGHTS = {
 
 # FVG detection configs per timeframe for multi-TF analysis
 FVG_MULTI_TF_CONFIGS = {
-    "1h":  {"max_fvgs": 4, "search_range_points": 400, "min_size_percentile": 0.40},
-    "15m": {"max_fvgs": 4, "search_range_points": 300, "min_size_percentile": 0.30},
-    "5m":  {"max_fvgs": 3, "search_range_points": 200, "min_size_percentile": 0.20},
-    "1m":  {"max_fvgs": 3, "search_range_points": 100, "min_size_percentile": 0.15},
+    "1h":  {"max_fvgs": 4, "search_range_points": 400, "min_size_percentile": 0.40, "lookback_bars": 10},
+    "15m": {"max_fvgs": 4, "search_range_points": 300, "min_size_percentile": 0.30, "lookback_bars": 16},
+    "5m":  {"max_fvgs": 3, "search_range_points": 200, "min_size_percentile": 0.20, "lookback_bars": 24},
+    "1m":  {"max_fvgs": 3, "search_range_points": 100, "min_size_percentile": 0.15, "lookback_bars": 30},
 }
 
 # Entry is only allowed on these timeframes (15M and below)
