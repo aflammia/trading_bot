@@ -83,7 +83,7 @@ def render():
             interval = st.selectbox(
                 "Chart Timeframe",
                 ["1m", "5m", "15m", "1h"],
-                index=3,
+                index=2,
                 help="Primary chart display timeframe. FVGs are analyzed on all timeframes.",
             )
 
