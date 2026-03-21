@@ -8,6 +8,7 @@ Integrates with MongoDB for persistent storage.
 import os
 import sys
 import json
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -153,6 +154,8 @@ def load_data(
 def load_multi_tf_data(
     start: str = None,
     end: str = None,
+    primary_interval: str = None,
+    primary_df: pd.DataFrame = None,
 ) -> Dict[str, pd.DataFrame]:
     """
     Load data for all analysis timeframes: 1H, 15M, 5M, 1M.
@@ -173,11 +176,17 @@ def load_multi_tf_data(
         start = start_dt.strftime("%Y-%m-%d")
 
     data = {}
+    if primary_interval and primary_df is not None and not primary_df.empty:
+        data[primary_interval] = primary_df
+
     for tf in MULTI_TF_FVG_TIMEFRAMES:
+        if tf in data:
+            continue
         try:
             df = download_data(interval=tf, start=start, end=end)
             if not df.empty:
                 data[tf] = df
+            time.sleep(0.35)
         except Exception as e:
             print(f"[ENGINE] Warning: Could not load {tf} data: {e}")
 

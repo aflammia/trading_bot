@@ -200,6 +200,8 @@ def render():
                 multi_tf_data = load_multi_tf_data(
                     start=str(start_date),
                     end=str(end_date),
+                    primary_interval=interval,
+                    primary_df=df,
                 )
 
                 st.success(
