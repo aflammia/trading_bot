@@ -1,0 +1,108 @@
+╔════════════════════════════════════════════════════════════════════╗
+║               ICT TRADING BOT — REPORTE DE SIMULACIÓN              ║
+║                      Período: Pipeline Completo                    ║
+║                    Generado: 2026-03-21 23:21:25                   ║
+╚════════════════════════════════════════════════════════════════════╝
+
+=================================================================
+        REPORTE DE RENDIMIENTO — ICT Trading Bot
+=================================================================
+
+── TRADES ──────────────────────────────────────────────
+  Total Trades:       0
+  Wins / Losses:      0 / 0
+  Win Rate:           0.0%
+  Trades/Day (avg):   0.0
+
+── P&L ─────────────────────────────────────────────────
+  P&L Total (net):    $+0.00
+  P&L Bruto:          $+0.00
+  Comisiones:         $0.00
+  Avg Win:            $+0.00
+  Avg Loss:           $+0.00
+  Largest Win:        $+0.00
+  Largest Loss:       $+0.00
+  Expectancy/trade:   $+0.00
+
+── RATIOS ──────────────────────────────────────────────
+  Profit Factor:      0.00
+  Sharpe Ratio:       0.00
+  Sortino Ratio:      0.00
+  Avg R:R:            0.00:1
+
+── DRAWDOWN ────────────────────────────────────────────
+  Max Drawdown:       $0.00 (0.00%)
+  Max DD Duration:    0 trades
+  Avg Drawdown:       $0.00
+
+── CUENTA ──────────────────────────────────────────────
+  Balance Inicial:    $50,000.00
+  Balance Final:      $50,000.00
+  Retorno Total:      +0.00%
+  Best Day:           $+0.00
+  Worst Day:          $+0.00
+
+── CONSISTENCIA (OneUpTrader) ─────────────────────────
+  Top 3 Days Sum:     $0.00
+  Total Positive PnL: $0.00
+  Rule Passed:        ✗ NO
+
+── METAS DE PRODUCCIÓN ────────────────────────────────
+  Sharpe > 1.5:       ✗ (0.00)
+  MDD < 3% diario:    ✓ (0.00%)
+  Profit Factor >1.2: ✗ (0.00)
+  Win Rate > 50%:     ✗ (0.0%)
+=================================================================
+
+======================================================================
+        WALK-FORWARD ANALYSIS REPORT
+======================================================================
+
+  Window  0 | Train: 2025-08-01→2025-08-29 | Test: 2025-08-29→2025-09-05 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window  1 | Train: 2025-08-08→2025-09-05 | Test: 2025-09-05→2025-09-12 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window  2 | Train: 2025-08-15→2025-09-12 | Test: 2025-09-12→2025-09-19 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window  3 | Train: 2025-08-22→2025-09-19 | Test: 2025-09-19→2025-09-26 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window  4 | Train: 2025-08-29→2025-09-26 | Test: 2025-09-26→2025-10-03 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window  5 | Train: 2025-09-05→2025-10-03 | Test: 2025-10-03→2025-10-10 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window  6 | Train: 2025-09-12→2025-10-10 | Test: 2025-10-10→2025-10-17 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window  7 | Train: 2025-09-19→2025-10-17 | Test: 2025-10-17→2025-10-24 | IS Sharpe: -35.30 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window  8 | Train: 2025-09-26→2025-10-24 | Test: 2025-10-24→2025-10-31 | IS Sharpe: -1.74 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window  9 | Train: 2025-10-03→2025-10-31 | Test: 2025-10-31→2025-11-06 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 10 | Train: 2025-10-10→2025-11-06 | Test: 2025-11-06→2025-11-13 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 11 | Train: 2025-10-17→2025-11-13 | Test: 2025-11-13→2025-11-20 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 12 | Train: 2025-10-24→2025-11-20 | Test: 2025-11-20→2025-11-27 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 13 | Train: 2025-10-31→2025-11-27 | Test: 2025-11-27→2025-12-04 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 14 | Train: 2025-11-06→2025-12-04 | Test: 2025-12-04→2025-12-11 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 15 | Train: 2025-11-13→2025-12-11 | Test: 2025-12-11→2025-12-18 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 16 | Train: 2025-11-20→2025-12-18 | Test: 2025-12-18→2025-12-25 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 17 | Train: 2025-11-27→2025-12-25 | Test: 2025-12-25→2026-01-01 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 18 | Train: 2025-12-04→2026-01-01 | Test: 2026-01-01→2026-01-08 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 19 | Train: 2025-12-11→2026-01-08 | Test: 2026-01-08→2026-01-15 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 20 | Train: 2025-12-18→2026-01-15 | Test: 2026-01-15→2026-01-22 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 21 | Train: 2025-12-25→2026-01-22 | Test: 2026-01-22→2026-01-29 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 22 | Train: 2026-01-01→2026-01-29 | Test: 2026-01-29→2026-02-05 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 23 | Train: 2026-01-08→2026-02-05 | Test: 2026-02-05→2026-02-12 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 24 | Train: 2026-01-15→2026-02-12 | Test: 2026-02-12→2026-02-19 | IS Sharpe: +0.00 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+  Window 25 | Train: 2026-01-22→2026-02-19 | Test: 2026-02-19→2026-02-26 | IS Sharpe: -55.88 | OOS Sharpe: +0.00 | Deg: +100.0% | ✗
+
+──────────────────────────────────────────────────────────────────────
+Walk-Forward Analysis: 26 ventanas
+  Avg OOS Sharpe:        0.00
+  Avg Degradation:       100.0%
+  Functional Windows:    0%
+  Overall Functional:    ✗ NO
+======================================================================
+
+╔════════════════════════════════════════════════════════════════════╗
+║                           VEREDICTO FINAL                          ║
+╚════════════════════════════════════════════════════════════════════╝
+
+  ✗ Sharpe Ratio > 1.5
+  ✗ Profit Factor > 1.2
+  ✓ Max DD < $2,500
+  ✗ Win Rate > 45%
+  ✗ WFA: Funcional
+
+  Score: 1/5 checks pasados
+
+  ✗ BOT NO FUNCIONAL — Requiere revisión significativa de la estrategia

@@ -11,3 +11,4 @@ fpdf2>=2.7.0
 pymongo>=4.6.0
 dnspython>=2.4.0
 pytz>=2023.3
+tzdata>=2024.1

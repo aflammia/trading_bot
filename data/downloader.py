@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional
 
 import pandas as pd
+import pytz
 import yfinance as yf
 
 import sys
@@ -30,6 +31,26 @@ YFINANCE_LIMITS = {
     "1h":  730,
     "1d":  99999,  # sin límite práctico
 }
+
+
+def _resolve_tz(tz_name: str):
+    """Resolve timezone object robustly across environments with/without zoneinfo DB."""
+    aliases = {
+        "US/Eastern": "America/New_York",
+    }
+
+    try:
+        return pytz.timezone(tz_name)
+    except Exception:
+        alias = aliases.get(tz_name)
+        if alias:
+            try:
+                return pytz.timezone(alias)
+            except Exception:
+                pass
+
+    print(f"[DATA] WARNING: Could not resolve timezone '{tz_name}'. Falling back to UTC.")
+    return pytz.UTC
 
 
 def _cache_path(symbol: str, interval: str, start: str, end: str) -> str:
@@ -176,10 +197,18 @@ def download_data(
     df = df[[c for c in keep_cols if c in df.columns]].copy()
 
     # Asegurar timezone
-    if df.index.tz is not None:
-        df.index = df.index.tz_convert(TIMEZONE_ET)
-    else:
-        df.index = df.index.tz_localize("UTC").tz_convert(TIMEZONE_ET)
+    tz_target = _resolve_tz(TIMEZONE_ET)
+    try:
+        if df.index.tz is not None:
+            df.index = df.index.tz_convert(tz_target)
+        else:
+            df.index = df.index.tz_localize("UTC").tz_convert(tz_target)
+    except Exception as e:
+        print(f"[DATA] WARNING: Timezone conversion failed ({e}). Using UTC.")
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("UTC")
+        else:
+            df.index = df.index.tz_convert("UTC")
 
     # Eliminar filas con NaN en OHLC
     df.dropna(subset=["Open", "High", "Low", "Close"], inplace=True)
