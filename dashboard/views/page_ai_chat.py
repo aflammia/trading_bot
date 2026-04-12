@@ -10,12 +10,37 @@ from datetime import datetime
 from dashboard.theme import PURPLE, NEON_GREEN, HOT_PINK
 
 
+def _resolve_gemini_api_key() -> str:
+    """Resolve Gemini API key from env or Streamlit secrets."""
+    env_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if env_key:
+        return env_key
+
+    try:
+        root_key = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
+        if root_key:
+            return root_key
+    except Exception:
+        pass
+
+    try:
+        gemini_cfg = st.secrets.get("gemini", None)
+        if gemini_cfg is not None and hasattr(gemini_cfg, "get"):
+            nested_key = str(gemini_cfg.get("api_key", "")).strip()
+            if nested_key:
+                return nested_key
+    except Exception:
+        pass
+
+    return ""
+
+
 def render():
     st.title("AI Analyst -- Chuky AI")
     st.markdown("*Preguntale al Chuky sobre tu estrategia, trades y rendimiento.*")
 
     # ── API Key Setup ───────────────────────────────────────────
-    api_key = os.environ.get("GEMINI_API_KEY", "")
+    api_key = _resolve_gemini_api_key()
     if not api_key:
         api_key = st.text_input(
             "Gemini API Key",
@@ -23,6 +48,8 @@ def render():
             help="Ingresa tu API key de Google Gemini para activar el AI Analyst. "
                  "Sin API key, el chat funciona con respuestas pre-programadas.",
         )
+    else:
+        st.caption("Gemini API key cargada desde entorno/secrets.")
 
     # ── Chat History ────────────────────────────────────────────
     if "chat_history" not in st.session_state:
@@ -217,8 +244,10 @@ Reglas:
         return response.text or "Sin respuesta de Gemini."
 
     except ImportError:
-        return ("La libreria google-generativeai no esta instalada. "
-                "Ejecuta: pip install google-generativeai")
+        return (
+            "La libreria google-generativeai no esta instalada en el despliegue. "
+            "Agrega 'google-generativeai>=0.8.5' en requirements.txt y vuelve a desplegar."
+        )
     except Exception as e:
         error_str = str(e)
         if "API_KEY" in error_str.upper() or "401" in error_str or "403" in error_str:

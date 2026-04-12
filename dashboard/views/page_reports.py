@@ -11,6 +11,31 @@ from datetime import datetime
 from dashboard.theme import PURPLE, NEON_GREEN, HOT_PINK
 
 
+def _resolve_gemini_api_key() -> str:
+    """Resolve Gemini API key from env or Streamlit secrets."""
+    env_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if env_key:
+        return env_key
+
+    try:
+        root_key = str(st.secrets.get("GEMINI_API_KEY", "")).strip()
+        if root_key:
+            return root_key
+    except Exception:
+        pass
+
+    try:
+        gemini_cfg = st.secrets.get("gemini", None)
+        if gemini_cfg is not None and hasattr(gemini_cfg, "get"):
+            nested_key = str(gemini_cfg.get("api_key", "")).strip()
+            if nested_key:
+                return nested_key
+    except Exception:
+        pass
+
+    return ""
+
+
 def render():
     st.title("Reportes & Exportacion")
     st.markdown("*Genera informes profesionales y descarga tus datos.*")
@@ -44,13 +69,15 @@ def render():
 def _render_pdf_report(metrics, trades_df: pd.DataFrame, config: dict):
     st.subheader("Informe PDF Profesional")
 
-    gemini_key = os.environ.get("GEMINI_API_KEY", "")
+    gemini_key = _resolve_gemini_api_key()
     if not gemini_key:
         gemini_key = st.text_input(
             "Gemini API Key (para analisis AI en el PDF)",
             type="password",
             help="Con API key se agrega un analisis profesional generado por Gemini Pro.",
         )
+    else:
+        st.caption("Gemini API key cargada desde entorno/secrets.")
 
     include_ai = st.checkbox("Incluir analisis AI (Gemini)", value=bool(gemini_key))
 
@@ -178,6 +205,11 @@ Responde SOLO con el analisis, sin markdown headers (#), usa texto plano."""
         response = model.generate_content(prompt)
         return response.text or ""
 
+    except ImportError:
+        return (
+            "[Error: google-generativeai no esta instalada en el despliegue. "
+            "Agrega 'google-generativeai>=0.8.5' en requirements.txt y vuelve a desplegar.]"
+        )
     except Exception as e:
         return f"[Error al generar analisis AI: {str(e)}]"
 
