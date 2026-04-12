@@ -86,6 +86,195 @@ def _is_model_not_found_error(error_text: str) -> bool:
     )
 
 
+def _find_time_col(df: pd.DataFrame) -> str:
+    for col in ("exit_time", "entry_time", "timestamp", "datetime"):
+        if col in df.columns:
+            return col
+    return ""
+
+
+def _compute_streaks(pnls: list[float]) -> tuple[int, int]:
+    max_win, max_loss = 0, 0
+    run_win, run_loss = 0, 0
+    for pnl in pnls:
+        if pnl > 0:
+            run_win += 1
+            run_loss = 0
+            max_win = max(max_win, run_win)
+        elif pnl < 0:
+            run_loss += 1
+            run_win = 0
+            max_loss = max(max_loss, run_loss)
+        else:
+            run_win = 0
+            run_loss = 0
+    return max_win, max_loss
+
+
+def _build_report_diagnostics(metrics, trades_df: pd.DataFrame, config: dict) -> dict:
+    """Build board-level diagnostics and improvement actions from backtest data."""
+    diagnostics = {
+        "executive_lines": [],
+        "direction_lines": [],
+        "reason_lines": [],
+        "temporal_lines": [],
+        "risk_lines": [],
+        "gap_lines": [],
+        "actions": [],
+    }
+
+    if trades_df is None or trades_df.empty:
+        diagnostics["executive_lines"].append("No hay operaciones para diagnostico detallado.")
+        return diagnostics
+
+    pnl_col = "pnl_net" if "pnl_net" in trades_df.columns else "pnl"
+    if pnl_col not in trades_df.columns:
+        diagnostics["executive_lines"].append("No se encontro columna de P&L por operacion.")
+        return diagnostics
+
+    work = trades_df.copy()
+    work[pnl_col] = pd.to_numeric(work[pnl_col], errors="coerce").fillna(0.0)
+    pnls = work[pnl_col].tolist()
+    max_win_streak, max_loss_streak = _compute_streaks(pnls)
+
+    diagnostics["executive_lines"] = [
+        f"Total de operaciones: {len(work)} | Win rate: {metrics.win_rate:.1%} | Profit factor: {metrics.profit_factor:.2f}.",
+        f"Drawdown maximo: ${metrics.max_drawdown_usd:,.0f} ({metrics.max_drawdown_usd / 2500 * 100:.0f}% del limite de la cuenta).",
+        f"Expectancy: ${metrics.expectancy:+,.2f} por trade | R:R promedio: {metrics.avg_rr_ratio:.2f}.",
+        f"Racha ganadora maxima: {max_win_streak} | Racha perdedora maxima: {max_loss_streak}.",
+    ]
+
+    if "direction" in work.columns:
+        grouped = work.groupby("direction")[pnl_col].agg(["count", "sum", "mean"])
+        for direction, row in grouped.sort_values("sum", ascending=False).iterrows():
+            mask = work["direction"] == direction
+            wr = (work.loc[mask, pnl_col] > 0).mean() if mask.any() else 0.0
+            diagnostics["direction_lines"].append(
+                f"{direction}: {int(row['count'])} trades | Win rate {wr:.1%} | P&L ${row['sum']:+,.2f} | Avg ${row['mean']:+,.2f}."
+            )
+
+    if "reason" in work.columns:
+        reasons = work.groupby("reason")[pnl_col].agg(["count", "sum", "mean"]).sort_values("count", ascending=False).head(8)
+        for reason, row in reasons.iterrows():
+            diagnostics["reason_lines"].append(
+                f"{reason}: {int(row['count'])} salidas | P&L ${row['sum']:+,.2f} | Avg ${row['mean']:+,.2f}."
+            )
+
+    time_col = _find_time_col(work)
+    if time_col:
+        ts = pd.to_datetime(work[time_col], errors="coerce")
+        valid = work.loc[ts.notna(), [pnl_col]].copy()
+        if not valid.empty:
+            valid["_ts"] = ts[ts.notna()]
+            valid["_hour"] = valid["_ts"].dt.hour
+            by_hour = valid.groupby("_hour")[pnl_col].mean().sort_values(ascending=False)
+            if not by_hour.empty:
+                best_hour = int(by_hour.index[0])
+                worst_hour = int(by_hour.index[-1])
+                diagnostics["temporal_lines"].append(
+                    f"Mejor hora promedio: {best_hour:02d}:00 (avg ${by_hour.iloc[0]:+,.2f} por trade)."
+                )
+                diagnostics["temporal_lines"].append(
+                    f"Peor hora promedio: {worst_hour:02d}:00 (avg ${by_hour.iloc[-1]:+,.2f} por trade)."
+                )
+
+            valid["_date"] = valid["_ts"].dt.date
+            by_day = valid.groupby("_date")[pnl_col].sum().sort_values(ascending=False)
+            if not by_day.empty and abs(metrics.total_pnl) > 1e-9:
+                top3 = float(by_day.head(3).sum())
+                concentration = abs(top3 / float(metrics.total_pnl))
+                diagnostics["temporal_lines"].append(
+                    f"Concentracion de resultados: top-3 dias explican {concentration:.1%} del P&L neto."
+                )
+
+    # Gap analysis vs governance targets
+    targets = [
+        ("Profit Factor", metrics.profit_factor, 1.35, "high"),
+        ("Sharpe Ratio", metrics.sharpe_ratio, 1.50, "high"),
+        ("Win Rate", metrics.win_rate, 0.50, "high"),
+        ("R:R promedio", metrics.avg_rr_ratio, 1.40, "high"),
+        ("Max Drawdown USD", metrics.max_drawdown_usd, 1000.0, "low"),
+    ]
+    for name, actual, target, direction in targets:
+        if direction == "high":
+            gap = max(0.0, target - float(actual))
+            diagnostics["gap_lines"].append(
+                f"{name}: actual {actual:.2f} | objetivo >= {target:.2f} | brecha {gap:.2f}."
+            )
+        else:
+            gap = max(0.0, float(actual) - target)
+            diagnostics["gap_lines"].append(
+                f"{name}: actual {actual:,.2f} | objetivo <= {target:,.2f} | exceso {gap:,.2f}."
+            )
+
+    max_daily_loss = float(config.get("max_daily_loss", 550))
+    if metrics.max_drawdown_usd > 0.70 * 2500:
+        diagnostics["actions"].append({
+            "priority": "Alta",
+            "title": "Reducir presion de riesgo intradia",
+            "evidence": f"Drawdown maximo {metrics.max_drawdown_usd/2500:.0%} del limite de cuenta.",
+            "action": "Reducir contratos base en 1 y limitar operaciones a setups con confluencia 1H+15M.",
+            "impact": "Menor probabilidad de invalidar la cuenta por cola de perdidas.",
+        })
+    if metrics.profit_factor < 1.2:
+        diagnostics["actions"].append({
+            "priority": "Alta",
+            "title": "Mejorar calidad de entradas",
+            "evidence": f"Profit Factor actual {metrics.profit_factor:.2f}.",
+            "action": "Eliminar setups sin confirmacion de estructura y exigir distancia minima a liquidez objetivo.",
+            "impact": "Aumenta expectativa por trade y reduce ruido operativo.",
+        })
+    if metrics.avg_rr_ratio < 1.2:
+        diagnostics["actions"].append({
+            "priority": "Media",
+            "title": "Rebalancear TP/SL",
+            "evidence": f"R:R promedio {metrics.avg_rr_ratio:.2f}.",
+            "action": "Revisar colocacion de TP para priorizar escenarios >=1.4R cuando la estructura lo permita.",
+            "impact": "Mejora rentabilidad sin aumentar frecuencia de trading.",
+        })
+    if metrics.win_rate < 0.45:
+        diagnostics["actions"].append({
+            "priority": "Media",
+            "title": "Filtrar contexto horario y de volatilidad",
+            "evidence": f"Win rate actual {metrics.win_rate:.1%}.",
+            "action": "Concentrar ejecucion en ventanas historicamente rentables y pausar en horas de menor edge.",
+            "impact": "Mayor consistencia y menor dispersion de resultados.",
+        })
+    if metrics.largest_loss < -max_daily_loss:
+        diagnostics["actions"].append({
+            "priority": "Alta",
+            "title": "Limitar perdida por operacion",
+            "evidence": f"Mayor perdida individual ${metrics.largest_loss:+,.2f} supera el maximo diario configurado (${max_daily_loss:,.0f}).",
+            "action": "Imponer hard stop por operacion y validar slippage de ejecucion en escenarios de alta volatilidad.",
+            "impact": "Reduce eventos extremos que deterioran el equity.",
+        })
+    if not bool(getattr(metrics, "consistency_check_passed", True)):
+        diagnostics["actions"].append({
+            "priority": "Media",
+            "title": "Mejorar consistencia de P&L diario",
+            "evidence": "Fallo de consistencia en distribucion de ganancias por dia.",
+            "action": "Reducir variabilidad de sizing y evitar concentrar resultado en pocos dias excepcionales.",
+            "impact": "Perfil de riesgo mas defendible ante comite de inversion.",
+        })
+
+    if not diagnostics["actions"]:
+        diagnostics["actions"].append({
+            "priority": "Media",
+            "title": "Programa de mejora continua",
+            "evidence": "Metricas principales dentro de rangos saludables.",
+            "action": "Mantener configuracion y ejecutar revisiones quincenales de drift en win rate, PF y drawdown.",
+            "impact": "Sostener robustez operativa ante cambios de mercado.",
+        })
+
+    diagnostics["risk_lines"] = [
+        f"Max DD vs limite de cuenta: {metrics.max_drawdown_usd / 2500:.0%}.",
+        f"Pico de perdida por trade: ${metrics.largest_loss:+,.2f}.",
+        f"Trades por dia: {metrics.trades_per_day:.2f}.",
+    ]
+
+    return diagnostics
+
+
 def render():
     st.title("Reportes & Exportacion")
     st.markdown("*Genera informes profesionales y descarga tus datos.*")
@@ -227,29 +416,28 @@ CONFIGURACION:
 Estructura tu respuesta EXACTAMENTE asi (usa estos titulos):
 
 1. RESUMEN EJECUTIVO
-(2-3 oraciones de veredicto general)
+(2-4 oraciones con conclusion general para comite de socios)
 
-2. ANALISIS DE RENDIMIENTO
-- Evaluacion de Win Rate vs Profit Factor
-- Evaluacion de R:R ratio (avg_win/avg_loss)
-- Analisis de expectancy y su significado
+2. ALCANCE Y CONFIABILIDAD DEL BACKTEST
+- Calidad y limites de los datos
+- Sesgos potenciales o restricciones del analisis
 
-3. GESTION DE RIESGO
-- Evaluacion del drawdown vs limite de la prop firm ($2,500 trailing DD)
-- Riesgo por trade y por dia
-- Probabilidad de ruin estimada
+3. DESEMPENO Y PERFIL DE RIESGO
+- Win Rate, Profit Factor, Sharpe, Sortino y Expectancy
+- Drawdown absoluto/relativo y riesgo de continuidad
 
-4. FORTALEZAS DETECTADAS
-(Lista de 2-4 fortalezas con datos concretos)
+4. COMPORTAMIENTO OPERATIVO DEL BOT
+- Patrones de entrada/salida observables
+- Rachas, concentracion de resultados y estabilidad diaria
 
-5. DEBILIDADES Y RIESGOS
-(Lista de 2-4 debilidades con datos concretos)
+5. FALLAS PRINCIPALES DETECTADAS
+(2-5 fallas concretas, cada una con evidencia numerica)
 
-6. RECOMENDACIONES CONCRETAS
-(3-5 acciones especificas con numeros para mejorar el sistema)
+6. PLAN DE MEJORA PRIORIZADO
+(3-6 acciones concretas, cada una con impacto esperado y horizonte 30/60/90 dias)
 
-7. VEREDICTO PARA PROP FIRM
-(Evaluacion: LISTO / NECESITA TRABAJO / NO LISTO con justificacion)
+7. VEREDICTO DE GOBERNANZA
+(APTO / APTO CON CONDICIONES / NO APTO con justificacion tecnica)
 
 Responde SOLO con el analisis, sin markdown headers (#), usa texto plano."""
 
@@ -306,25 +494,26 @@ def _build_professional_pdf(metrics, trades_df, config, ai_analysis: str = "") -
                 text = text.replace(orig, repl)
             return text.encode('latin-1', errors='replace').decode('latin-1')
 
-        # Colors
-        C_PURPLE = (155, 89, 182)
-        C_DARK = (38, 20, 71)
+        # Corporate palette
+        C_PURPLE = (22, 55, 97)
+        C_DARK = (15, 23, 42)
         C_WHITE = (255, 255, 255)
         C_LIGHT_GRAY = (240, 240, 240)
-        C_TEXT = (50, 50, 50)
+        C_TEXT = (45, 55, 72)
         C_GREEN = (0, 200, 83)
         C_RED = (244, 67, 54)
-        C_HEADER_BG = (155, 89, 182)
+        C_HEADER_BG = (22, 55, 97)
 
         pdf = FPDF()
         pdf.set_auto_page_break(auto=True, margin=15)
+        diagnostics = _build_report_diagnostics(metrics, trades_df, config)
 
         # ── COVER PAGE ──────────────────────────────────────────
         pdf.add_page()
         pdf.set_fill_color(*C_DARK)
         pdf.rect(0, 0, 210, 297, 'F')
 
-        # Purple accent bar
+        # Accent bars
         pdf.set_fill_color(*C_PURPLE)
         pdf.rect(0, 100, 210, 4, 'F')
         pdf.rect(0, 180, 210, 2, 'F')
@@ -337,7 +526,7 @@ def _build_professional_pdf(metrics, trades_df, config, ai_analysis: str = "") -
         pdf.set_font("Helvetica", "", 14)
         pdf.set_text_color(200, 200, 200)
         pdf.ln(5)
-        pdf.cell(0, 10, "Backtest Performance Report", align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 10, "Backtest Governance Report", align="C", new_x="LMARGIN", new_y="NEXT")
 
         pdf.ln(50)
         pdf.set_font("Helvetica", "", 12)
@@ -351,11 +540,11 @@ def _build_professional_pdf(metrics, trades_df, config, ai_analysis: str = "") -
         pdf.cell(0, 8, "Cuenta: OneUpTrader $50,000 | Trailing DD $2,500", align="C",
                  new_x="LMARGIN", new_y="NEXT")
 
-        pdf.ln(30)
-        pdf.set_text_color(139, 92, 246)
-        pdf.set_font("Helvetica", "I", 11)
-        pdf.cell(0, 10, "Chuky no duerme. Chuky no perdona.", align="C",
-                 new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(24)
+        pdf.set_text_color(170, 180, 200)
+        pdf.set_font("Helvetica", "I", 10)
+        pdf.cell(0, 10, "Documento tecnico para revision de socios y comite de riesgo.", align="C",
+             new_x="LMARGIN", new_y="NEXT")
 
         # ── PAGE 2: EXECUTIVE SUMMARY ───────────────────────────
         def _usable_width() -> float:
@@ -380,6 +569,13 @@ def _build_professional_pdf(metrics, trades_df, config, ai_analysis: str = "") -
             pdf.cell(55, 7, _safe(label))
             pdf.set_font("Helvetica", "B" if bold_value else "", 10)
             pdf.cell(0, 7, _safe(str(value)), new_x="LMARGIN", new_y="NEXT")
+
+        def _subheader(title: str):
+            pdf.set_x(pdf.l_margin)
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_text_color(*C_PURPLE)
+            pdf.cell(0, 8, _safe(title), new_x="LMARGIN", new_y="NEXT")
+            pdf.set_text_color(*C_TEXT)
 
         pdf.add_page()
         pdf.set_fill_color(*C_WHITE)
@@ -473,6 +669,70 @@ def _build_professional_pdf(metrics, trades_df, config, ai_analysis: str = "") -
         ]
         for label, value in activity_rows:
             _kv(label, value)
+
+        pdf.ln(4)
+        _subheader("Observaciones ejecutivas")
+        pdf.set_font("Helvetica", "", 9)
+        for line in diagnostics.get("executive_lines", []):
+            _mc(f"- {line}", line_h=5)
+
+        # ── OPERATING DIAGNOSTICS ─────────────────────────────
+        pdf.add_page()
+        pdf.set_fill_color(*C_WHITE)
+        pdf.rect(0, 0, 210, 297, 'F')
+        _section_header("DIAGNOSTICO OPERATIVO DEL BOT")
+        pdf.set_font("Helvetica", "", 9)
+
+        _subheader("1) Comportamiento por direccion")
+        direction_lines = diagnostics.get("direction_lines", [])
+        if direction_lines:
+            for line in direction_lines:
+                _mc(f"- {line}", line_h=5)
+        else:
+            _mc("- No hay datos suficientes de direccion para analisis.", line_h=5)
+
+        pdf.ln(2)
+        _subheader("2) Motivos de salida y calidad de ejecucion")
+        reason_lines = diagnostics.get("reason_lines", [])
+        if reason_lines:
+            for line in reason_lines:
+                _mc(f"- {line}", line_h=5)
+        else:
+            _mc("- No hay datos de motivos de salida para analisis.", line_h=5)
+
+        pdf.ln(2)
+        _subheader("3) Patrones temporales")
+        temporal_lines = diagnostics.get("temporal_lines", [])
+        if temporal_lines:
+            for line in temporal_lines:
+                _mc(f"- {line}", line_h=5)
+        else:
+            _mc("- No hay timestamps validos para analisis horario/diario.", line_h=5)
+
+        pdf.ln(2)
+        _subheader("4) Exposicion de riesgo")
+        for line in diagnostics.get("risk_lines", []):
+            _mc(f"- {line}", line_h=5)
+
+        # ── IMPROVEMENT ROADMAP ───────────────────────────────
+        pdf.add_page()
+        pdf.set_fill_color(*C_WHITE)
+        pdf.rect(0, 0, 210, 297, 'F')
+        _section_header("MARGENES DE MEJORA Y PLAN DE ACCION")
+
+        _subheader("Gap analysis contra objetivos de gestion")
+        pdf.set_font("Helvetica", "", 9)
+        for line in diagnostics.get("gap_lines", []):
+            _mc(f"- {line}", line_h=5)
+
+        pdf.ln(2)
+        _subheader("Plan de mejora priorizado")
+        for idx, action in enumerate(diagnostics.get("actions", []), start=1):
+            _mc(f"{idx}. [{action['priority']}] {action['title']}", line_h=5)
+            _mc(f"   Evidencia: {action['evidence']}", line_h=5)
+            _mc(f"   Accion recomendada: {action['action']}", line_h=5)
+            _mc(f"   Impacto esperado: {action['impact']}", line_h=5)
+            pdf.ln(1)
 
         # ── TRADES TABLE ────────────────────────────────────────
         if not trades_df.empty:
