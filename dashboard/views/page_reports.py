@@ -11,7 +11,7 @@ from datetime import datetime
 from dashboard.theme import PURPLE, NEON_GREEN, HOT_PINK
 
 
-DEFAULT_GEMINI_MODEL = "gemini-2.5-pro"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-pro-preview"
 FALLBACK_GEMINI_MODELS = ("gemini-2.5-pro", "gemini-2.5-flash")
 
 
@@ -182,8 +182,9 @@ def _get_gemini_pdf_analysis(metrics, trades_df, config, api_key: str, model_nam
 
         prompt = f"""Eres un analista cuantitativo de trading profesional especializado en futuros NQ/MNQ.
 Genera un analisis tecnico profesional de este backtest para incluir en un PDF de reporte.
-El analisis debe ser DIRECTO, TECNICO y UTIL para un trader profesional.
-Escribe en espanol.
+    El analisis debe ser DIRECTO, TECNICO, UTIL y basado SOLO en los datos provistos.
+    No inventes metricas, no asumas hechos no observables y no uses afirmaciones sin respaldo en el contexto.
+    Escribe en espanol.
 
 DATOS DEL BACKTEST:
 - Instrumento: MNQ (Micro E-mini Nasdaq 100 Futures)
@@ -256,7 +257,14 @@ Responde SOLO con el analisis, sin markdown headers (#), usa texto plano."""
         last_error = None
         for candidate_model in _build_model_candidates(preferred_model):
             try:
-                model = genai.GenerativeModel(candidate_model)
+                model = genai.GenerativeModel(
+                    candidate_model,
+                    generation_config={
+                        "temperature": 0.0,
+                        "top_p": 0.95,
+                        "max_output_tokens": 1400,
+                    },
+                )
                 response = model.generate_content(prompt)
                 return response.text or ""
             except Exception as model_error:
@@ -350,7 +358,16 @@ def _build_professional_pdf(metrics, trades_df, config, ai_analysis: str = "") -
                  new_x="LMARGIN", new_y="NEXT")
 
         # ── PAGE 2: EXECUTIVE SUMMARY ───────────────────────────
+        def _usable_width() -> float:
+            return max(40.0, pdf.w - pdf.l_margin - pdf.r_margin)
+
+        def _mc(text: str, line_h: float = 5.0):
+            # Always reset x and use explicit width to avoid FPDF "Not enough horizontal space".
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(_usable_width(), line_h, _safe(text), new_x="LMARGIN", new_y="NEXT")
+
         def _section_header(title):
+            pdf.set_x(pdf.l_margin)
             pdf.set_fill_color(*C_PURPLE)
             pdf.set_text_color(*C_WHITE)
             pdf.set_font("Helvetica", "B", 14)
@@ -573,14 +590,13 @@ def _build_professional_pdf(metrics, trades_df, config, ai_analysis: str = "") -
                     pdf.ln(3)
                     pdf.set_font("Helvetica", "B", 10)
                     pdf.set_text_color(*C_PURPLE)
-                    pdf.multi_cell(0, 6, _safe(line))
+                    _mc(line, line_h=6)
                     pdf.set_font("Helvetica", "", 9)
                     pdf.set_text_color(*C_TEXT)
                 elif line.startswith("-") or line.startswith("*"):
-                    pdf.cell(5, 5, "")
-                    pdf.multi_cell(0, 5, _safe(line))
+                    _mc(f"  {line}", line_h=5)
                 else:
-                    pdf.multi_cell(0, 5, _safe(line))
+                    _mc(line, line_h=5)
 
         # ── DISCLAIMER ──────────────────────────────────────────
         pdf.add_page()
@@ -599,7 +615,7 @@ def _build_professional_pdf(metrics, trades_df, config, ai_analysis: str = "") -
             "y pueden diferir de los datos reales del broker. "
             "Use esta informacion bajo su propio riesgo y criterio."
         )
-        pdf.multi_cell(0, 5, _safe(disclaimer))
+        _mc(disclaimer, line_h=5)
 
         # Return as bytes (not bytearray) -- fixes StreamlitAPIException
         output = pdf.output()
