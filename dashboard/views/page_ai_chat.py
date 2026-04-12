@@ -35,12 +35,40 @@ def _resolve_gemini_api_key() -> str:
     return ""
 
 
+def _resolve_gemini_model() -> str:
+    """Resolve Gemini model id from env or Streamlit secrets."""
+    default_model = "gemini-3.1-pro"
+
+    env_model = os.environ.get("GEMINI_MODEL", "").strip()
+    if env_model:
+        return env_model
+
+    try:
+        root_model = str(st.secrets.get("GEMINI_MODEL", "")).strip()
+        if root_model:
+            return root_model
+    except Exception:
+        pass
+
+    try:
+        gemini_cfg = st.secrets.get("gemini", None)
+        if gemini_cfg is not None and hasattr(gemini_cfg, "get"):
+            nested_model = str(gemini_cfg.get("model", "")).strip()
+            if nested_model:
+                return nested_model
+    except Exception:
+        pass
+
+    return default_model
+
+
 def render():
     st.title("AI Analyst -- Chuky AI")
     st.markdown("*Preguntale al Chuky sobre tu estrategia, trades y rendimiento.*")
 
     # ── API Key Setup ───────────────────────────────────────────
     api_key = _resolve_gemini_api_key()
+    model_name = _resolve_gemini_model()
     if not api_key:
         api_key = st.text_input(
             "Gemini API Key",
@@ -49,7 +77,7 @@ def render():
                  "Sin API key, el chat funciona con respuestas pre-programadas.",
         )
     else:
-        st.caption("Gemini API key cargada desde entorno/secrets.")
+        st.caption(f"Gemini API key cargada desde entorno/secrets. Modelo: {model_name}")
 
     # ── Chat History ────────────────────────────────────────────
     if "chat_history" not in st.session_state:
@@ -58,7 +86,7 @@ def render():
     # ── Backtest handoff from Backtest Lab ─────────────────────
     prefill_prompt = st.session_state.get("ai_prefill_prompt")
     if prefill_prompt:
-        _handle_message(prefill_prompt, api_key)
+        _handle_message(prefill_prompt, api_key, model_name)
         st.session_state.pop("ai_prefill_prompt", None)
         st.success("Contexto del ultimo backtest cargado en el chat.")
 
@@ -74,7 +102,7 @@ def render():
     for i, q in enumerate(quick_questions):
         with quick_qs[i]:
             if st.button(q, width="stretch", key=f"quick_{i}"):
-                _handle_message(q, api_key)
+                _handle_message(q, api_key, model_name)
                 st.rerun()
 
     st.markdown("---")
@@ -91,7 +119,7 @@ def render():
     # ── Chat Input ──────────────────────────────────────────────
     user_input = st.chat_input("Preguntale al Chuky...")
     if user_input:
-        _handle_message(user_input, api_key)
+        _handle_message(user_input, api_key, model_name)
         st.rerun()
 
     # ── Clear Chat ──────────────────────────────────────────────
@@ -101,7 +129,7 @@ def render():
             st.rerun()
 
 
-def _handle_message(user_msg: str, api_key: str = ""):
+def _handle_message(user_msg: str, api_key: str = "", model_name: str = ""):
     """Process a user message and generate AI response."""
     st.session_state["chat_history"].append({
         "role": "user",
@@ -111,7 +139,7 @@ def _handle_message(user_msg: str, api_key: str = ""):
     context = _build_context()
 
     if api_key:
-        response = _call_gemini(user_msg, context, api_key)
+        response = _call_gemini(user_msg, context, api_key, model_name=model_name)
     else:
         response = _generate_local_response(user_msg, context)
 
@@ -204,7 +232,7 @@ METODOLOGIA: ICT (Fair Value Gaps, Liquidity Sweeps, Market Structure)"""
     return ctx
 
 
-def _call_gemini(user_msg: str, context: str, api_key: str) -> str:
+def _call_gemini(user_msg: str, context: str, api_key: str, model_name: str = "") -> str:
     """Call Google Gemini 3.1 Pro for response."""
     try:
         import google.generativeai as genai
@@ -228,8 +256,10 @@ Reglas:
 
 {context}"""
 
+        resolved_model = model_name or _resolve_gemini_model()
+
         model = genai.GenerativeModel(
-            'gemini-2.0-flash',
+            resolved_model,
             system_instruction=system_instruction,
         )
 

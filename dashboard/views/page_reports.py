@@ -36,6 +36,33 @@ def _resolve_gemini_api_key() -> str:
     return ""
 
 
+def _resolve_gemini_model() -> str:
+    """Resolve Gemini model id from env or Streamlit secrets."""
+    default_model = "gemini-3.1-pro"
+
+    env_model = os.environ.get("GEMINI_MODEL", "").strip()
+    if env_model:
+        return env_model
+
+    try:
+        root_model = str(st.secrets.get("GEMINI_MODEL", "")).strip()
+        if root_model:
+            return root_model
+    except Exception:
+        pass
+
+    try:
+        gemini_cfg = st.secrets.get("gemini", None)
+        if gemini_cfg is not None and hasattr(gemini_cfg, "get"):
+            nested_model = str(gemini_cfg.get("model", "")).strip()
+            if nested_model:
+                return nested_model
+    except Exception:
+        pass
+
+    return default_model
+
+
 def render():
     st.title("Reportes & Exportacion")
     st.markdown("*Genera informes profesionales y descarga tus datos.*")
@@ -70,6 +97,7 @@ def _render_pdf_report(metrics, trades_df: pd.DataFrame, config: dict):
     st.subheader("Informe PDF Profesional")
 
     gemini_key = _resolve_gemini_api_key()
+    model_name = _resolve_gemini_model()
     if not gemini_key:
         gemini_key = st.text_input(
             "Gemini API Key (para analisis AI en el PDF)",
@@ -77,7 +105,7 @@ def _render_pdf_report(metrics, trades_df: pd.DataFrame, config: dict):
             help="Con API key se agrega un analisis profesional generado por Gemini Pro.",
         )
     else:
-        st.caption("Gemini API key cargada desde entorno/secrets.")
+        st.caption(f"Gemini API key cargada desde entorno/secrets. Modelo: {model_name}")
 
     include_ai = st.checkbox("Incluir analisis AI (Gemini)", value=bool(gemini_key))
 
@@ -86,7 +114,7 @@ def _render_pdf_report(metrics, trades_df: pd.DataFrame, config: dict):
             ai_analysis = ""
             if include_ai and gemini_key:
                 with st.spinner("Consultando Gemini para analisis profesional..."):
-                    ai_analysis = _get_gemini_pdf_analysis(metrics, trades_df, config, gemini_key)
+                    ai_analysis = _get_gemini_pdf_analysis(metrics, trades_df, config, gemini_key, model_name=model_name)
 
             pdf_bytes = _build_professional_pdf(metrics, trades_df, config, ai_analysis)
 
@@ -106,7 +134,7 @@ def _render_pdf_report(metrics, trades_df: pd.DataFrame, config: dict):
     _render_report_preview(metrics, trades_df, config)
 
 
-def _get_gemini_pdf_analysis(metrics, trades_df, config, api_key: str) -> str:
+def _get_gemini_pdf_analysis(metrics, trades_df, config, api_key: str, model_name: str = "") -> str:
     """Call Gemini to generate professional trading analysis for the PDF."""
     try:
         import google.generativeai as genai
@@ -201,7 +229,8 @@ Estructura tu respuesta EXACTAMENTE asi (usa estos titulos):
 
 Responde SOLO con el analisis, sin markdown headers (#), usa texto plano."""
 
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        resolved_model = model_name or _resolve_gemini_model()
+        model = genai.GenerativeModel(resolved_model)
         response = model.generate_content(prompt)
         return response.text or ""
 
