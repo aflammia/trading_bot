@@ -450,7 +450,6 @@ Responde SOLO con el analisis, sin markdown headers (#), usa texto plano."""
                     generation_config={
                         "temperature": 0.0,
                         "top_p": 0.95,
-                        "max_output_tokens": 1400,
                     },
                 )
                 response = model.generate_content(prompt)
