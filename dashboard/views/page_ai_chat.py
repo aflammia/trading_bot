@@ -10,6 +10,10 @@ from datetime import datetime
 from dashboard.theme import PURPLE, NEON_GREEN, HOT_PINK
 
 
+DEFAULT_GEMINI_MODEL = "gemini-2.5-pro"
+FALLBACK_GEMINI_MODELS = ("gemini-2.5-pro", "gemini-2.5-flash")
+
+
 def _resolve_gemini_api_key() -> str:
     """Resolve Gemini API key from env or Streamlit secrets."""
     env_key = os.environ.get("GEMINI_API_KEY", "").strip()
@@ -37,7 +41,7 @@ def _resolve_gemini_api_key() -> str:
 
 def _resolve_gemini_model() -> str:
     """Resolve Gemini model id from env or Streamlit secrets."""
-    default_model = "gemini-3.1-pro"
+    default_model = DEFAULT_GEMINI_MODEL
 
     env_model = os.environ.get("GEMINI_MODEL", "").strip()
     if env_model:
@@ -60,6 +64,25 @@ def _resolve_gemini_model() -> str:
         pass
 
     return default_model
+
+
+def _build_model_candidates(preferred_model: str) -> list[str]:
+    """Build ordered candidate models for robust fallback."""
+    candidates = [preferred_model] + list(FALLBACK_GEMINI_MODELS)
+    unique = []
+    for model in candidates:
+        m = (model or "").strip()
+        if m and m not in unique:
+            unique.append(m)
+    return unique
+
+
+def _is_model_not_found_error(error_text: str) -> bool:
+    text = (error_text or "").lower()
+    return (
+        "404" in text
+        and ("is not found" in text or "not supported for generatecontent" in text)
+    )
 
 
 def render():
@@ -233,7 +256,7 @@ METODOLOGIA: ICT (Fair Value Gaps, Liquidity Sweeps, Market Structure)"""
 
 
 def _call_gemini(user_msg: str, context: str, api_key: str, model_name: str = "") -> str:
-    """Call Google Gemini 3.1 Pro for response."""
+    """Call Google Gemini with model fallback for compatibility."""
     try:
         import google.generativeai as genai
 
@@ -256,12 +279,7 @@ Reglas:
 
 {context}"""
 
-        resolved_model = model_name or _resolve_gemini_model()
-
-        model = genai.GenerativeModel(
-            resolved_model,
-            system_instruction=system_instruction,
-        )
+        preferred_model = model_name or _resolve_gemini_model()
 
         # Build multi-turn chat history
         history = []
@@ -269,9 +287,25 @@ Reglas:
             role = "user" if m["role"] == "user" else "model"
             history.append({"role": role, "parts": [m["content"]]})
 
-        chat = model.start_chat(history=history)
-        response = chat.send_message(user_msg)
-        return response.text or "Sin respuesta de Gemini."
+        last_error = None
+        for candidate_model in _build_model_candidates(preferred_model):
+            try:
+                model = genai.GenerativeModel(
+                    candidate_model,
+                    system_instruction=system_instruction,
+                )
+                chat = model.start_chat(history=history)
+                response = chat.send_message(user_msg)
+                return response.text or "Sin respuesta de Gemini."
+            except Exception as model_error:
+                last_error = model_error
+                if not _is_model_not_found_error(str(model_error)):
+                    raise
+
+        if last_error is not None:
+            raise last_error
+
+        return "Sin respuesta de Gemini."
 
     except ImportError:
         return (
